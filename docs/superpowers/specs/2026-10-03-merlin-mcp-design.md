@@ -574,11 +574,11 @@ claude mcp add --scope user --transport http merlin http://127.0.0.1:8765/mcp
 
 本 MCP 的各项限制（固定工具集、每日重启额度、`confirm`、dnsmasq 回滚）可以防止 AI **在正常使用 MCP 时**出现误操作，但**不能**防止 AI 刻意绕过 MCP。原因如下：
 
-- Claude Code 以 `claude` 用户运行，MCP 以 `rshun` 用户运行
-- 当前 sudoers 中 `claude` 拥有 `(rshun) NOPASSWD: ALL`，即可以免密码以 `rshun` 身份执行任意命令
-- 因此 `claude` 可以：
-  - 通过 `sudo -u rshun ssh ...` 使用 rshun 的密钥直接登录路由器
-  - 通过 `sudo -u rshun` 修改 `state.json`，绕过每日重启限制
+- Claude Code 与 MCP 运行在不同的用户下
+- 但在当前环境中，Claude Code 所在的用户可以切换为 MCP 的运行用户执行命令
+- 因此 Claude Code 所在的用户可以：
+  - 使用 MCP 运行用户的 SSH 密钥直接登录路由器
+  - 修改 `state.json`，绕过每日重启限制
 
 这个情况在部署 MCP 之前就已经存在，不是由 MCP 引入的。按照"暂不考虑安全问题"的约定，本期接受这一风险。
 
@@ -594,7 +594,7 @@ claude mcp add --scope user --transport http merlin http://127.0.0.1:8765/mcp
 
 任选一种：
 
-1. 收紧 sudoers：去掉 `claude` 的 `(rshun) NOPASSWD: ALL`，或者只允许特定命令（会影响现有依赖这条规则的工作流程）
-2. 改为专用系统用户 `merlin-mcp` + 专用密钥，同时从路由器的授权列表中移除 rshun 的公钥
+1. 收紧权限：取消 Claude Code 所在用户切换为 MCP 运行用户的能力，或者只允许特定命令（会影响现有依赖这一能力的工作流程）
+2. 改为专用系统用户 `merlin-mcp` + 专用密钥，同时从路由器的授权列表中移除原用户的公钥
 
 采用后，需要把 MCP 的配置和状态目录迁移到新用户下。
