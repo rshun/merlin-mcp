@@ -3,7 +3,8 @@ Description=merlin-mcp: MCP server for Asuswrt-Merlin router
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/merlin-mcp serve --config %h/.config/merlin-mcp/config.yaml
+# 安装目录由 install.sh 生成服务文件时自动填入（默认 /opt/merlin-mcp）
+ExecStart=@PREFIX@/bin/merlin-mcp serve --config @PREFIX@/config/config.yaml
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

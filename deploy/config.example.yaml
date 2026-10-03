@@ -27,5 +27,6 @@ reboot:
   timezone: Asia/Shanghai                    # 按这个时区的自然日计算"每天"
   max_per_day: 1
 
-state_dir: /home/rshun/.local/state/merlin-mcp
-audit_log: /home/rshun/.local/state/merlin-mcp/audit.jsonl
+# 状态文件和审计日志放在安装目录下（install.sh 生成配置时自动填入）
+state_dir: @PREFIX@/state
+audit_log: @PREFIX@/state/audit.jsonl

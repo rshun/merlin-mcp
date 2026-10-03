@@ -27,36 +27,53 @@
 2. 上传到 Debian，例如：
 
    ```bash
-   scp merlin-mcp_v0.1.0_linux_amd64.tar.gz SHA256SUMS your_user@your_debian_host:~/
+   scp merlin-mcp_v0.2.0_linux_amd64.tar.gz SHA256SUMS your_user@your_debian_host:~/
    ```
 
    如果 Debian 能访问 GitHub，也可以在 Debian 上直接下载：
 
    ```bash
-   curl -LO https://github.com/rshun/merlin-mcp/releases/download/v0.1.0/merlin-mcp_v0.1.0_linux_amd64.tar.gz
-   curl -LO https://github.com/rshun/merlin-mcp/releases/download/v0.1.0/SHA256SUMS
+   curl -LO https://github.com/rshun/merlin-mcp/releases/download/v0.2.0/merlin-mcp_v0.2.0_linux_amd64.tar.gz
+   curl -LO https://github.com/rshun/merlin-mcp/releases/download/v0.2.0/SHA256SUMS
    ```
 
-3. 在 Debian 上，以 MCP 的运行用户校验、解压并安装：
+3. 首次安装前，用 sudo 创建安装目录并交给 MCP 的运行用户（只需执行一次）：
+
+   ```bash
+   sudo install -d -o rshun -g rshun -m 0755 /opt/merlin-mcp
+   ```
+
+4. 在 Debian 上，以 MCP 的运行用户校验、解压并安装（不需要 sudo）：
 
    ```bash
    sha256sum -c SHA256SUMS
-   tar -xzf merlin-mcp_v0.1.0_linux_amd64.tar.gz
-   bash merlin-mcp_v0.1.0_linux_amd64/install.sh
+   tar -xzf merlin-mcp_v0.2.0_linux_amd64.tar.gz
+   bash merlin-mcp_v0.2.0_linux_amd64/install.sh
    ```
 
-4. 按脚本最后打印的步骤完成配置
+   默认安装到 `/opt/merlin-mcp`，可用 `--prefix <目录>` 指定其他目录：
+
+   ```
+   /opt/merlin-mcp/
+   ├── bin/merlin-mcp          程序（升级时保留 merlin-mcp.prev）
+   ├── config/config.yaml      配置
+   └── state/                  状态文件与审计日志 audit.jsonl
+   ```
+
+   systemd 用户服务文件放在 `~/.config/systemd/user/merlin-mcp.service`。
+
+5. 按脚本最后打印的步骤完成配置
 
 ## 发布新版本（维护者）
 
 推送 `v*` tag 后，GitHub Actions（`.github/workflows/release.yml`）会运行检查和测试、构建发布包并创建 Release：
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-本地构建（开发测试用，需要 Go 1.26）：`bash scripts/build.sh v0.1.0-dev`
+本地构建（开发测试用，需要 Go 1.26）：`bash scripts/build.sh v0.2.0-dev`
 
 ## 接入 Claude Code
 
@@ -69,5 +86,5 @@ claude mcp add --scope user --transport http merlin http://127.0.0.1:8765/mcp
 - 只监听回环地址，没有鉴权
 - 不提供任意命令执行；所有命令都是代码中写死的模板
 - 状态类工具不读取任何密码类 nvram 字段
-- 修改类操作写入审计日志 `~/.local/state/merlin-mcp/audit.jsonl`
+- 修改类操作写入审计日志 `/opt/merlin-mcp/state/audit.jsonl`
 - MCP 的限制用于防止误操作，不能防止 AI 绕过 MCP，详见 `docs/superpowers/specs/2026-10-03-merlin-mcp-design.md` 第 12 节

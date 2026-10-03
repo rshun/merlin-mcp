@@ -384,20 +384,20 @@ type Runner interface {
 
 ### 5.5 状态文件
 
-- 路径：`state_dir/state.json`（默认 `/home/rshun/.local/state/merlin-mcp/state.json`）
+- 路径：`state_dir/state.json`（默认 `/opt/merlin-mcp/state/state.json`）
 - 写入方式：写临时文件 → fsync → rename
 - 进程内用互斥锁保护；只运行一个服务实例
 - 文件损坏或无法解析时：服务启动失败并给出明确原因，不会静默重置（防止重启额度被意外清零）
 
 ### 5.6 审计日志
 
-- 路径：`audit_log`（默认 `/home/rshun/.local/state/merlin-mcp/audit.jsonl`），每行一个 JSON 对象
+- 路径：`audit_log`（默认 `/opt/merlin-mcp/state/audit.jsonl`），每行一个 JSON 对象
 - 字段：`ts`、`tool`、`args`、`outcome`（`ok` / `rejected` / `error`）、`error_code`、`duration_ms`、`summary`
 - `args` 中名称匹配 `passwd`、`password`、`token`、`secret`、`private_key`、`api_key`（不区分大小写）的字段替换为 `****`。不使用单独的 `key` 作为匹配词，避免误伤 `keyword` 这类参数
 
 ## 6. 配置
 
-`/home/rshun/.config/merlin-mcp/config.yaml`（示例只使用占位符）。所有路径必须写绝对路径，不支持 `~` 展开：
+`/opt/merlin-mcp/config/config.yaml`（示例只使用占位符）。所有路径必须写绝对路径，不支持 `~` 展开：
 
 ```yaml
 listen: "127.0.0.1:8765"
@@ -425,8 +425,8 @@ reboot:
   timezone: Asia/Shanghai
   max_per_day: 1
 
-state_dir: /home/rshun/.local/state/merlin-mcp
-audit_log: /home/rshun/.local/state/merlin-mcp/audit.jsonl
+state_dir: /opt/merlin-mcp/state
+audit_log: /opt/merlin-mcp/state/audit.jsonl
 ```
 
 启动时校验，以下情况直接退出并给出原因：
@@ -474,19 +474,22 @@ HTTP 路由：`/mcp`（MCP Streamable HTTP）、`/healthz`（只返回服务自�
 
 ### 7.3 systemd 用户服务
 
-以 `rshun` 用户运行，使用 systemd 用户服务（`systemctl --user`），安装、升级、重启都不需要 sudo。
+以 `rshun` 用户运行，使用 systemd 用户服务（`systemctl --user`）。程序、配置和状态全部集中在安装目录下，默认 `/opt/merlin-mcp`（可用 `install.sh --prefix` 指定）。
 
 | 项目 | 位置 | 权限 |
 |---|---|---|
-| 二进制 | `/home/rshun/.local/bin/merlin-mcp` | 0755 |
-| 配置 | `/home/rshun/.config/merlin-mcp/config.yaml` | 目录 0700，文件 0600 |
-| 状态文件、审计日志 | `/home/rshun/.local/state/merlin-mcp/` | 目录 0700 |
-| unit 文件 | `/home/rshun/.config/systemd/user/merlin-mcp.service` | 0644 |
+| 安装目录 | `/opt/merlin-mcp/` | 属主 rshun，0755 |
+| 二进制 | `/opt/merlin-mcp/bin/merlin-mcp`（升级时保留 `merlin-mcp.prev`） | 0755 |
+| 配置 | `/opt/merlin-mcp/config/config.yaml` | 目录 0700，文件 0600 |
+| 状态文件、审计日志 | `/opt/merlin-mcp/state/` | 目录 0700 |
+| unit 文件 | `/home/rshun/.config/systemd/user/merlin-mcp.service`（systemd 只从用户目录加载用户服务） | 0644 |
 | SSH 密钥、known_hosts | rshun 现有的 `~/.ssh/` | 保持不变 |
+
+**一次性前提（需要 sudo）**：`/opt` 属于 root，首次安装前执行一次 `sudo install -d -o rshun -g rshun -m 0755 /opt/merlin-mcp`，把安装目录交给 rshun。之后的安装、升级、重启都不需要 sudo。
 
 unit 文件要点：
 
-- `ExecStart=%h/.local/bin/merlin-mcp serve --config %h/.config/merlin-mcp/config.yaml`
+- `ExecStart=/opt/merlin-mcp/bin/merlin-mcp serve --config /opt/merlin-mcp/config/config.yaml`（模板中写作 `@PREFIX@`，由 install.sh 替换）
 - `Restart=on-failure`、`RestartSec=5`
 - `NoNewPrivileges=true`。用户服务中 `ProtectSystem`、`PrivateTmp` 等沙箱选项依赖非特权用户命名空间，不保证可用，所以不使用
 - `WantedBy=default.target`
@@ -497,13 +500,15 @@ unit 文件要点：
 
 ### 7.4 install.sh
 
-以 `rshun` 身份执行，不需要 sudo，执行前由用户审阅。负责：
+用法：`bash install.sh [--prefix 安装目录]`，默认 `/opt/merlin-mcp`。以 `rshun` 身份执行，不需要 sudo，执行前由用户审阅。负责：
 
-1. 创建 7.3 节中的目录，并设置权限
-2. 复制二进制和 unit 文件；升级时先把旧的二进制保存为 `merlin-mcp.prev`
-3. 首次安装时把 `config.example.yaml` 复制为 `config.yaml`（权限 0600）；**已存在时不覆盖**
-4. 执行 `systemctl --user daemon-reload`
-5. 打印接下来需要手动执行的命令（`loginctl enable-linger`、编辑配置、`merlin-mcp check`、`systemctl --user enable --now merlin-mcp`）
+1. 校验安装目录：必须是只含字母、数字和 `._/-` 的绝对路径；目录不存在或不可写时，打印需要用 sudo 执行的 `install -d` 命令并退出，不做任何修改
+2. 在安装目录下创建 `bin`、`config`、`state`，并设置 7.3 节中的权限
+3. 复制二进制；升级时先把旧的二进制保存为 `merlin-mcp.prev`
+4. 把服务文件模板中的 `@PREFIX@` 替换为安装目录后，写入 `~/.config/systemd/user/`
+5. 首次安装时把 `config.example.yaml` 替换 `@PREFIX@` 后生成 `config.yaml`（权限 0600）；**已存在时不覆盖**
+6. 执行 `systemctl --user daemon-reload`
+7. 打印接下来需要手动执行的命令（`loginctl enable-linger`、编辑配置、`merlin-mcp check`、`systemctl --user enable --now merlin-mcp`）
 
 脚本**不会**启动或重启服务，也不删除任何文件。
 

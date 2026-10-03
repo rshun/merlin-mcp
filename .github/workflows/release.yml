@@ -24,6 +24,7 @@ jobs:
           test -z "$(gofmt -l .)"
           go vet ./...
           go test -count=1 ./...
+          bash scripts/test_install.sh
 
       - name: 构建发布包
         run: bash scripts/build.sh "${GITHUB_REF_NAME}"
