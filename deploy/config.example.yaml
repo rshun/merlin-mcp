@@ -1,0 +1,31 @@
+# merlin-mcp 配置文件。所有路径必须写绝对路径，不支持 ~。
+# 只能监听回环地址；服务没有鉴权。
+listen: "127.0.0.1:8765"
+
+router:
+  host: your_router_ip                       # 路由器局域网 IP
+  port: 22
+  user: your_router_user                     # 路由器管理员用户名
+  key_file: /home/rshun/.ssh/your_key_file   # 登录路由器使用的私钥（权限必须为 600，不支持带口令的私钥）
+  known_hosts: /home/rshun/.ssh/known_hosts  # 必须已包含路由器的记录
+  command_timeout: 15s
+
+# 设为 true 才会注册 dnsmasq_addfile_add/remove、dnsmasq_apply、router_reboot。
+# 未配置时默认为 false（只读）。
+allow_mutations: false
+
+paths:
+  dnsmasq_add: /jffs/configs/dnsmasq.conf.add
+  backup_dir: /jffs/merlin-mcp/backups
+  syslog: auto                               # auto = 依次尝试 /jffs/syslog.log、/tmp/syslog.log
+
+dnsmasq:
+  health_check_domain: router.asus.com       # apply 后用来验证 dnsmasq 正常工作的域名
+  backup_keep: 20
+
+reboot:
+  timezone: Asia/Shanghai                    # 按这个时区的自然日计算"每天"
+  max_per_day: 1
+
+state_dir: /home/rshun/.local/state/merlin-mcp
+audit_log: /home/rshun/.local/state/merlin-mcp/audit.jsonl

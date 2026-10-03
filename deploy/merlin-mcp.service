@@ -1,0 +1,12 @@
+[Unit]
+Description=merlin-mcp: MCP server for Asuswrt-Merlin router
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/merlin-mcp serve --config %h/.config/merlin-mcp/config.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
