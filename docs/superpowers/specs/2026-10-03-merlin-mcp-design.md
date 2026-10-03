@@ -18,7 +18,8 @@
 | 约束 | 内容 |
 |---|---|
 | 运行位置 | Debian 服务器（amd64），与路由器同一网段 |
-| 客户端 | Claude Code，运行在同一台 Debian 上 |
+| 客户端 | Claude Code，运行在同一台 Debian 上，以 `claude` 用户运行 |
+| 运行用户 | MCP 以 `rshun` 用户运行（systemd 用户服务），不新建系统用户 |
 | 传输方式 | MCP Streamable HTTP，只监听 `127.0.0.1` |
 | 连接路由器 | SSH，密钥文件认证 |
 | 路由器侧 | 不安装任何东西 |
@@ -61,7 +62,7 @@
 Claude Code
    │  HTTP POST http://127.0.0.1:<port>/mcp   （MCP Streamable HTTP）
    ▼
-merlin-mcp（Debian，systemd 服务，用户 merlin-mcp）
+merlin-mcp（Debian，systemd 用户服务，以 rshun 运行）
    ├─ tools     参数校验、权限检查（allow_mutations / confirm）、审计日志
    ├─ 业务模块   syslog / status / clients / diagnose / dnsmasq / reboot
    └─ sshx      SSH 长连接、host key 校验、命令执行、stdin 传输文件内容
@@ -371,20 +372,20 @@ type Runner interface {
 
 ### 5.5 状态文件
 
-- 路径：`state_dir/state.json`（默认 `/var/lib/merlin-mcp/state.json`）
+- 路径：`state_dir/state.json`（默认 `/home/rshun/.local/state/merlin-mcp/state.json`）
 - 写入方式：写临时文件 → fsync → rename
 - 进程内用互斥锁保护；只运行一个服务实例
 - 文件损坏或无法解析时：服务启动失败并给出明确原因，不会静默重置（防止重启额度被意外清零）
 
 ### 5.6 审计日志
 
-- 路径：`audit_log`（默认 `/var/log/merlin-mcp/audit.jsonl`），每行一个 JSON 对象
+- 路径：`audit_log`（默认 `/home/rshun/.local/state/merlin-mcp/audit.jsonl`），每行一个 JSON 对象
 - 字段：`ts`、`tool`、`args`、`outcome`（`ok` / `rejected` / `error`）、`error_code`、`duration_ms`、`summary`
 - `args` 中名称匹配 `passwd`、`password`、`token`、`secret`、`private_key`、`api_key`（不区分大小写）的字段替换为 `****`。不使用单独的 `key` 作为匹配词，避免误伤 `keyword` 这类参数
 
 ## 6. 配置
 
-`/etc/merlin-mcp/config.yaml`（示例只使用占位符）：
+`/home/rshun/.config/merlin-mcp/config.yaml`（示例只使用占位符）。所有路径必须写绝对路径，不支持 `~` 展开：
 
 ```yaml
 listen: "127.0.0.1:8765"
@@ -393,8 +394,8 @@ router:
   host: your_router_ip
   port: 22
   user: your_router_user
-  key_file: /etc/merlin-mcp/id_ed25519
-  known_hosts: /etc/merlin-mcp/known_hosts
+  key_file: /home/rshun/.ssh/your_key_file       # 直接使用 rshun 现有的密钥
+  known_hosts: /home/rshun/.ssh/known_hosts      # 直接使用 rshun 现有的 known_hosts（支持哈希格式）
   command_timeout: 15s
 
 allow_mutations: true
@@ -412,8 +413,8 @@ reboot:
   timezone: Asia/Shanghai
   max_per_day: 1
 
-state_dir: /var/lib/merlin-mcp
-audit_log: /var/log/merlin-mcp/audit.jsonl
+state_dir: /home/rshun/.local/state/merlin-mcp
+audit_log: /home/rshun/.local/state/merlin-mcp/audit.jsonl
 ```
 
 启动时校验，以下情况直接退出并给出原因：
@@ -421,6 +422,7 @@ audit_log: /var/log/merlin-mcp/audit.jsonl
 - 必填项缺失、格式错误
 - `listen` 不是回环地址（`127.0.0.0/8` 或 `::1`）。服务没有鉴权，只允许本机访问
 - `key_file` 或 `known_hosts` 不存在；`key_file` 的权限宽于 0600
+- `known_hosts` 中没有 `router.host` 对应的记录
 - `reboot.timezone` 无法加载
 
 路由器连不上不影响启动。
@@ -454,19 +456,44 @@ audit_log: /var/log/merlin-mcp/audit.jsonl
 
 HTTP 路由：`/mcp`（MCP Streamable HTTP）、`/healthz`（只返回服务自身状态，不访问路由器）。
 
-### 7.3 systemd
+### 7.3 systemd 用户服务
 
-- 专用系统用户 `merlin-mcp`，不能登录
-- 密钥复制到 `/etc/merlin-mcp/id_ed25519`，属主 `merlin-mcp`，权限 0600
-- `known_hosts` 用 `ssh-keyscan` 生成，需要人工核对指纹
-- 服务加固：`NoNewPrivileges=true`、`ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true`，并通过 `StateDirectory=merlin-mcp`、`LogsDirectory=merlin-mcp` 开放写权限
-- 运行日志输出到 journald（`journalctl -u merlin-mcp`），不记录密钥、密码或 token
+以 `rshun` 用户运行，使用 systemd 用户服务（`systemctl --user`），安装、升级、重启都不需要 sudo。
+
+| 项目 | 位置 | 权限 |
+|---|---|---|
+| 二进制 | `/home/rshun/.local/bin/merlin-mcp` | 0755 |
+| 配置 | `/home/rshun/.config/merlin-mcp/config.yaml` | 目录 0700，文件 0600 |
+| 状态文件、审计日志 | `/home/rshun/.local/state/merlin-mcp/` | 目录 0700 |
+| unit 文件 | `/home/rshun/.config/systemd/user/merlin-mcp.service` | 0644 |
+| SSH 密钥、known_hosts | rshun 现有的 `~/.ssh/` | 保持不变 |
+
+unit 文件要点：
+
+- `ExecStart=%h/.local/bin/merlin-mcp serve --config %h/.config/merlin-mcp/config.yaml`
+- `Restart=on-failure`、`RestartSec=5`
+- `NoNewPrivileges=true`。用户服务中 `ProtectSystem`、`PrivateTmp` 等沙箱选项依赖非特权用户命名空间，不保证可用，所以不使用
+- `WantedBy=default.target`
+
+**一次性前提**：执行一次 `sudo loginctl enable-linger rshun`，让 rshun 的用户服务在开机后、没有登录时也能自动启动。这条命令只修改 systemd 对 rshun 的设置，不影响其他服务。
+
+日志：运行日志输出到 journald，用 `journalctl --user -u merlin-mcp` 查看。如果 journald 没有开启持久化存储导致用户日志不可见，改用 `journalctl _SYSTEMD_USER_UNIT=merlin-mcp.service`。日志不记录密钥、密码或 token。
 
 ### 7.4 install.sh
 
-由用户审阅后手动执行。负责：创建用户、创建目录、复制二进制和 unit 文件。首次安装时复制示例配置；升级时**不覆盖**已有配置，并把旧二进制保存为 `merlin-mcp.prev`。脚本不删除任何文件。
+以 `rshun` 身份执行，不需要 sudo，执行前由用户审阅。负责：
 
-回滚：把 `merlin-mcp.prev` 换回 `merlin-mcp`，然后执行 `systemctl restart merlin-mcp`。
+1. 创建 7.3 节中的目录，并设置权限
+2. 复制二进制和 unit 文件；升级时先把旧的二进制保存为 `merlin-mcp.prev`
+3. 首次安装时把 `config.example.yaml` 复制为 `config.yaml`（权限 0600）；**已存在时不覆盖**
+4. 执行 `systemctl --user daemon-reload`
+5. 打印接下来需要手动执行的命令（`loginctl enable-linger`、编辑配置、`merlin-mcp check`、`systemctl --user enable --now merlin-mcp`）
+
+脚本**不会**启动或重启服务，也不删除任何文件。
+
+升级后由用户执行 `systemctl --user restart merlin-mcp`。
+
+回滚：把 `merlin-mcp.prev` 换回 `merlin-mcp`，然后执行 `systemctl --user restart merlin-mcp`。
 
 ### 7.5 接入 Claude Code
 
@@ -540,3 +567,34 @@ claude mcp add --scope user --transport http merlin http://127.0.0.1:8765/mcp
 - 多台路由器
 - `.deb` 打包、Docker 镜像
 - 鉴权（只监听回环地址）
+
+## 12. 安全边界与已知风险
+
+### 12.1 MCP 的限制是"防误操作"，不是"防篡改"
+
+本 MCP 的各项限制（固定工具集、每日重启额度、`confirm`、dnsmasq 回滚）可以防止 AI **在正常使用 MCP 时**出现误操作，但**不能**防止 AI 刻意绕过 MCP。原因如下：
+
+- Claude Code 以 `claude` 用户运行，MCP 以 `rshun` 用户运行
+- 当前 sudoers 中 `claude` 拥有 `(rshun) NOPASSWD: ALL`，即可以免密码以 `rshun` 身份执行任意命令
+- 因此 `claude` 可以：
+  - 通过 `sudo -u rshun ssh ...` 使用 rshun 的密钥直接登录路由器
+  - 通过 `sudo -u rshun` 修改 `state.json`，绕过每日重启限制
+
+这个情况在部署 MCP 之前就已经存在，不是由 MCP 引入的。按照"暂不考虑安全问题"的约定，本期接受这一风险。
+
+### 12.2 本期仍然成立的保证
+
+- 通过 MCP 的工具，无法在路由器上执行任意命令
+- 通过 MCP 的工具，同一自然日内最多发起 1 次重启
+- 通过 MCP 修改 dnsmasq 配置时，失败会自动回滚
+- MCP 只监听回环地址
+- 密钥不会出现在 MCP 的输出、日志或审计日志中
+
+### 12.3 将来需要真正隔离时的做法
+
+任选一种：
+
+1. 收紧 sudoers：去掉 `claude` 的 `(rshun) NOPASSWD: ALL`，或者只允许特定命令（会影响现有依赖这条规则的工作流程）
+2. 改为专用系统用户 `merlin-mcp` + 专用密钥，同时从路由器的授权列表中移除 rshun 的公钥
+
+采用后，需要把 MCP 的配置和状态目录迁移到新用户下。
