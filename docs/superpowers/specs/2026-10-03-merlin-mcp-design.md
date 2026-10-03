@@ -458,7 +458,7 @@ merlin-mcp.service
 install.sh
 ```
 
-安装方式：仓库是私有的，用户在本机浏览器登录 GitHub，从 Releases 页面下载 tar 包和 `SHA256SUMS`，校验后用 `scp` 上传到 Debian，再按 7.4 节执行 `install.sh`。Debian 上不需要 GitHub 认证。
+安装方式：仓库是公开的。用户从 Releases 页面下载 tar 包和 `SHA256SUMS`，用 `scp` 上传到 Debian（Debian 能访问 GitHub 时也可以直接 `curl` 下载），用 `sha256sum -c` 校验后按 7.4 节执行 `install.sh`。不需要任何 GitHub 认证。
 
 `scripts/build.sh` 也可以在本地手动运行（Git Bash 或 Linux），用于开发和测试。
 

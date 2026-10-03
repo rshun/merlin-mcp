@@ -23,11 +23,18 @@
 
 ## 安装
 
-1. 在 GitHub 仓库的 **Releases** 页面下载 `merlin-mcp_<版本>_linux_amd64.tar.gz` 和 `SHA256SUMS`（仓库是私有的，需要在浏览器中登录 GitHub）
+1. 在 GitHub 仓库的 [Releases](https://github.com/rshun/merlin-mcp/releases) 页面下载 `merlin-mcp_<版本>_linux_amd64.tar.gz` 和 `SHA256SUMS`
 2. 上传到 Debian，例如：
 
    ```bash
    scp merlin-mcp_v0.1.0_linux_amd64.tar.gz SHA256SUMS your_user@your_debian_host:~/
+   ```
+
+   如果 Debian 能访问 GitHub，也可以在 Debian 上直接下载：
+
+   ```bash
+   curl -LO https://github.com/rshun/merlin-mcp/releases/download/v0.1.0/merlin-mcp_v0.1.0_linux_amd64.tar.gz
+   curl -LO https://github.com/rshun/merlin-mcp/releases/download/v0.1.0/SHA256SUMS
    ```
 
 3. 在 Debian 上，以 MCP 的运行用户校验、解压并安装：
