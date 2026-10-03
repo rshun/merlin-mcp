@@ -23,20 +23,33 @@
 
 ## 安装
 
-在开发机上构建（需要 Go 1.26）：
+1. 在 GitHub 仓库的 **Releases** 页面下载 `merlin-mcp_<版本>_linux_amd64.tar.gz` 和 `SHA256SUMS`（仓库是私有的，需要在浏览器中登录 GitHub）
+2. 上传到 Debian，例如：
+
+   ```bash
+   scp merlin-mcp_v0.1.0_linux_amd64.tar.gz SHA256SUMS your_user@your_debian_host:~/
+   ```
+
+3. 在 Debian 上，以 MCP 的运行用户校验、解压并安装：
+
+   ```bash
+   sha256sum -c SHA256SUMS
+   tar -xzf merlin-mcp_v0.1.0_linux_amd64.tar.gz
+   bash merlin-mcp_v0.1.0_linux_amd64/install.sh
+   ```
+
+4. 按脚本最后打印的步骤完成配置
+
+## 发布新版本（维护者）
+
+推送 `v*` tag 后，GitHub Actions（`.github/workflows/release.yml`）会运行检查和测试、构建发布包并创建 Release：
 
 ```bash
-bash scripts/build.sh v0.1.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-把 `dist/merlin-mcp_v0.1.0_linux_amd64.tar.gz` 复制到 Debian，以 MCP 的运行用户解压并执行：
-
-```bash
-tar -xzf merlin-mcp_v0.1.0_linux_amd64.tar.gz
-bash merlin-mcp_v0.1.0_linux_amd64/install.sh
-```
-
-然后按脚本最后打印的步骤完成配置。
+本地构建（开发测试用，需要 Go 1.26）：`bash scripts/build.sh v0.1.0-dev`
 
 ## 接入 Claude Code
 

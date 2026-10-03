@@ -443,20 +443,24 @@ audit_log: /home/rshun/.local/state/merlin-mcp/audit.jsonl
 
 ### 7.1 构建与发布
 
-- 在开发机（Windows，Go 1.26.3）上交叉编译：
+发布由 GitHub Actions 自动完成，用户不需要在本地构建：
 
-  ```sh
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=<版本>" ./cmd/merlin-mcp
-  ```
+1. 维护者推送形如 `v0.1.0` 的 tag
+2. `.github/workflows/release.yml` 在 GitHub 上运行 `gofmt` 检查、`go vet`、`go test`，然后用 `scripts/build.sh <tag>` 交叉编译（`CGO_ENABLED=0 GOOS=linux GOARCH=amd64`）
+3. 创建同名 GitHub Release，附件为 `merlin-mcp_<版本>_linux_amd64.tar.gz` 和 `SHA256SUMS`
 
-- `scripts/build.sh`（bash，Git Bash 和 Linux 都能运行）生成 `dist/merlin-mcp_<版本>_linux_amd64.tar.gz`，内容如下：
+tar 包内容：
 
-  ```
-  merlin-mcp
-  config.example.yaml
-  merlin-mcp.service
-  install.sh
-  ```
+```
+merlin-mcp
+config.example.yaml
+merlin-mcp.service
+install.sh
+```
+
+安装方式：仓库是私有的，用户在本机浏览器登录 GitHub，从 Releases 页面下载 tar 包和 `SHA256SUMS`，校验后用 `scp` 上传到 Debian，再按 7.4 节执行 `install.sh`。Debian 上不需要 GitHub 认证。
+
+`scripts/build.sh` 也可以在本地手动运行（Git Bash 或 Linux），用于开发和测试。
 
 ### 7.2 命令行
 

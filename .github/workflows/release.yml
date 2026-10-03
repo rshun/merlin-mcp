@@ -1,0 +1,41 @@
+# 推送 v* tag 时：运行检查和测试，构建 linux/amd64 发布包，创建 GitHub Release。
+# 发布包在 Releases 页面下载后，上传到 Debian 用 install.sh 安装。
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # 创建 Release 需要
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: 检查与测试
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -count=1 ./...
+
+      - name: 构建发布包
+        run: bash scripts/build.sh "${GITHUB_REF_NAME}"
+
+      - name: 生成校验和
+        run: cd dist && sha256sum merlin-mcp_*.tar.gz > SHA256SUMS
+
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }} # Actions 自动提供的临时令牌，不需要配置任何 secret
+        run: >
+          gh release create "${GITHUB_REF_NAME}"
+          dist/merlin-mcp_*.tar.gz dist/SHA256SUMS
+          --title "${GITHUB_REF_NAME}"
+          --generate-notes
