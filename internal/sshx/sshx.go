@@ -125,8 +125,9 @@ func hostKeyAlgorithms(cb ssh.HostKeyCallback, addr string) ([]string, error) {
 }
 
 // Run 实现 runner.Runner。远程退出码非 0 不视为错误。
+// 每条命令最多执行 Timeout；调用方的 deadline 更早时以调用方为准。
 func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (runner.Result, error) {
-	if _, ok := ctx.Deadline(); !ok && c.opts.Timeout > 0 {
+	if c.opts.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.opts.Timeout)
 		defer cancel()
@@ -142,10 +143,9 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (runner.Resu
 	if err != nil {
 		return runner.Result{}, err
 	}
-	sess, err := conn.NewSession()
+	sess, err := c.openSession(ctx, conn)
 	if err != nil {
-		c.drop(conn)
-		return runner.Result{}, apperr.New(apperr.SSHUnreachable, "无法创建 SSH 会话: "+err.Error(), hintCheckRouter)
+		return runner.Result{}, err
 	}
 	defer sess.Close()
 
@@ -163,6 +163,8 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (runner.Resu
 	case <-ctx.Done():
 		_ = sess.Signal(ssh.SIGKILL)
 		_ = sess.Close()
+		// 超时可能意味着连接已经变成黑洞，丢弃它，下次调用重新连接
+		c.drop(conn)
 		return runner.Result{}, timeoutErr()
 	}
 
@@ -177,6 +179,35 @@ func (c *Client) Run(ctx context.Context, cmd string, stdin []byte) (runner.Resu
 	}
 	c.drop(conn)
 	return res, apperr.New(apperr.SSHUnreachable, "SSH 连接中断: "+err.Error(), hintCheckRouter)
+}
+
+// openSession 打开 session 并受 ctx 约束：连接失效时 NewSession 可能一直等不到对端确认。
+func (c *Client) openSession(ctx context.Context, conn *ssh.Client) (*ssh.Session, error) {
+	type opened struct {
+		s   *ssh.Session
+		err error
+	}
+	ch := make(chan opened, 1)
+	go func() {
+		s, err := conn.NewSession()
+		ch <- opened{s, err}
+	}()
+	select {
+	case o := <-ch:
+		if o.err != nil {
+			c.drop(conn)
+			return nil, apperr.New(apperr.SSHUnreachable, "无法创建 SSH 会话: "+o.err.Error(), hintCheckRouter)
+		}
+		return o.s, nil
+	case <-ctx.Done():
+		c.drop(conn)
+		go func() {
+			if o := <-ch; o.s != nil {
+				o.s.Close()
+			}
+		}()
+		return nil, timeoutErr()
+	}
 }
 
 func timeoutErr() error {
@@ -234,7 +265,19 @@ func (c *Client) keepAlive(conn *ssh.Client) {
 		if !current {
 			return
 		}
-		if _, _, err := conn.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+		// 一个间隔内收不到应答就认为连接已失效（路由器断电或死机时 TCP 不会马上报错）
+		reply := make(chan error, 1)
+		go func() {
+			_, _, err := conn.SendRequest("keepalive@openssh.com", true, nil)
+			reply <- err
+		}()
+		select {
+		case err := <-reply:
+			if err != nil {
+				c.drop(conn)
+				return
+			}
+		case <-time.After(c.opts.KeepAlive):
 			c.drop(conn)
 			return
 		}

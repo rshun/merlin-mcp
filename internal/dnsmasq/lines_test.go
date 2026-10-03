@@ -1,6 +1,8 @@
 package dnsmasq
 
 import (
+	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -27,6 +29,32 @@ func TestNormalizeInput(t *testing.T) {
 		if _, err := NormalizeInput(in); apperr.CodeOf(err) != apperr.InvalidArgument {
 			t.Errorf("NormalizeInput(%q) 应返回 INVALID_ARGUMENT，得到 %v", in, err)
 		}
+	}
+}
+
+func TestCheckAllowedRejectsDangerousOptions(t *testing.T) {
+	bad := []string{
+		"dhcp-script=/sbin/reboot",
+		"  DHCP-Script = /tmp/x",
+		"log-facility=/jffs/scripts/services-start",
+		"pid-file=/jffs/scripts/firewall-start",
+		"conf-file=/etc/shadow",
+		"conf-dir=/tmp",
+		"conf-script=/bin/sh -c id",
+		"dhcp-leasefile=/jffs/x",
+		"dumpfile=/jffs/x",
+		"enable-tftp",
+		"tftp-root=/jffs",
+		"user=root",
+	}
+	for _, l := range bad {
+		if err := CheckAllowed([]string{l}); apperr.CodeOf(err) != apperr.InvalidArgument {
+			t.Errorf("%q 应被拒绝，得到 %v", l, err)
+		}
+	}
+	good := []string{"dhcp-mac=set:openwrt,AA:BB:CC:00:00:01", "address=/a.example/0.0.0.0", "server=/b.example/192.0.2.53", "# dhcp-script=/x 注释", "dhcp-option=tag:openwrt,3,192.0.2.2"}
+	if err := CheckAllowed(good); err != nil {
+		t.Errorf("正常配置不应被拒绝: %v", err)
 	}
 }
 
@@ -78,6 +106,36 @@ func TestDiff(t *testing.T) {
 	}
 	if Diff("a\r\n", "a\n") != " a\n" {
 		t.Fatal("只有换行符不同时不应产生差异")
+	}
+}
+
+// gfwlist 一类的 .add 文件可能有上万行，追加一行时 diff 不能占用 O(n²) 内存。
+func TestDiffOnLargeFileUsesLittleMemory(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 5000; i++ {
+		fmt.Fprintf(&b, "server=/d%d.example/192.0.2.53\n", i)
+	}
+	oldC := b.String()
+	newC := oldC + "address=/new.example/0.0.0.0\n"
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	d := Diff(oldC, newC)
+	runtime.ReadMemStats(&after)
+
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 20<<20 {
+		t.Fatalf("Diff 分配了 %d MB，应小于 20MB", alloc>>20)
+	}
+	if !strings.HasSuffix(d, "+address=/new.example/0.0.0.0\n") || strings.Count(d, "\n+") != 1 || strings.Contains(d, "\n-") {
+		t.Fatalf("diff 结果不正确（末尾）: %q", d[len(d)-200:])
+	}
+}
+
+func TestDiffMiddleChange(t *testing.T) {
+	d := Diff("a\nb\nc\nd\ne\n", "a\nb\nX\nd\ne\n")
+	if d != " a\n b\n-c\n+X\n d\n e\n" {
+		t.Fatalf("diff = %q", d)
 	}
 }
 

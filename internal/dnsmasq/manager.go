@@ -223,6 +223,11 @@ func (m *Manager) Edit(ctx context.Context, op EditOp, lines []string, dryRun bo
 	if err != nil {
 		return EditResult{}, err
 	}
+	if op == OpAdd {
+		if err := CheckAllowed(norm); err != nil {
+			return EditResult{}, err
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

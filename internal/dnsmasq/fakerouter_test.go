@@ -1,6 +1,7 @@
 package dnsmasq
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rshun/merlin-mcp/internal/apperr"
 	"github.com/rshun/merlin-mcp/internal/runner"
 	"github.com/rshun/merlin-mcp/internal/runner/runnertest"
 	"github.com/rshun/merlin-mcp/internal/state"
@@ -29,6 +31,8 @@ type fakeRouter struct {
 	healthOK       bool
 	restartIgnored bool // service 命令返回成功，但 dnsmasq 实际没有重启
 	effective      string
+	pidSeq         []string // 非空时 pidof 依次返回这些值，用完后回到按 pid/running 计算
+	healthSeq      []bool   // 非空时健康检查依次返回这些结果（模拟残留的旧进程仍在应答）
 }
 
 var nameInCmd = regexp.MustCompile(`dnsmasq\.conf\.add\.\d{8}-\d{6}(-\d+)?`)
@@ -78,6 +82,11 @@ func newFakeRouter() *fakeRouter {
 		return runner.Result{ExitCode: f.testExit, Stdout: []byte(f.testOutput)}, nil
 	})
 	f.On("pidof_dnsmasq", func(string, []byte) (runner.Result, error) {
+		if len(f.pidSeq) > 0 {
+			v := f.pidSeq[0]
+			f.pidSeq = f.pidSeq[1:]
+			return out(v + "\n"), nil
+		}
 		if !f.running {
 			return out(""), nil
 		}
@@ -91,7 +100,11 @@ func newFakeRouter() *fakeRouter {
 		return out(""), nil
 	})
 	f.On("dnsmasq_health", func(string, []byte) (runner.Result, error) {
-		if f.running && f.healthOK {
+		ok := f.running && f.healthOK
+		if len(f.healthSeq) > 0 {
+			ok, f.healthSeq = f.healthSeq[0], f.healthSeq[1:]
+		}
+		if ok {
 			return out("Server: 127.0.0.1\nAddress 1: 127.0.0.1\n\nName: router.asus.com\nAddress 1: 192.0.2.1\n"), nil
 		}
 		return runner.Result{ExitCode: 1, Stdout: []byte("nslookup: can't resolve 'router.asus.com'")}, nil
@@ -102,11 +115,26 @@ func newFakeRouter() *fakeRouter {
 
 func newManager(t *testing.T, f *fakeRouter) (*Manager, *state.Store) {
 	t.Helper()
+	return newManagerWithRunner(t, f)
+}
+
+// ctxRunner 模拟真实 SSH Runner 的行为：ctx 已结束时命令直接超时失败。
+type ctxRunner struct{ inner runner.Runner }
+
+func (c ctxRunner) Run(ctx context.Context, cmd string, stdin []byte) (runner.Result, error) {
+	if ctx.Err() != nil {
+		return runner.Result{}, apperr.New(apperr.Timeout, "命令执行超时", "")
+	}
+	return c.inner.Run(ctx, cmd, stdin)
+}
+
+func newManagerWithRunner(t *testing.T, r runner.Runner) (*Manager, *state.Store) {
+	t.Helper()
 	store, err := state.Open(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := New(f, Options{
+	m := New(r, Options{
 		AddPath:      "/jffs/configs/dnsmasq.conf.add",
 		BackupDir:    "/jffs/merlin-mcp/backups",
 		HealthDomain: "router.asus.com",

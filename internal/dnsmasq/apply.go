@@ -63,7 +63,7 @@ func (m *Manager) Apply(ctx context.Context, acceptExternal bool) (ApplyResult, 
 
 	oldPID, newPID, cause := m.restartAndCheck(ctx)
 	if cause != nil {
-		return ApplyResult{}, m.rollback(ctx, st.KnownGoodBackup, cause)
+		return ApplyResult{}, m.rollback(ctx, st.KnownGoodBackup, view.content, cause)
 	}
 	name, err := m.backup(ctx, view.content)
 	if err != nil {
@@ -129,7 +129,7 @@ func (m *Manager) restartAndCheck(ctx context.Context) (oldPID, newPID string, e
 		if err != nil {
 			return oldPID, "", err
 		}
-		if cur != "" && cur != oldPID {
+		if isNewProcess(oldPID, cur) {
 			newPID = cur
 			break
 		}
@@ -141,6 +141,25 @@ func (m *Manager) restartAndCheck(ctx context.Context) (oldPID, newPID string, e
 		return oldPID, newPID, err
 	}
 	return oldPID, newPID, nil
+}
+
+// isNewProcess 判断 pidof 的输出是否代表全新的 dnsmasq：非空，且与重启前的 PID 没有交集。
+// Asus 上 dnsmasq 通常有两个进程，只退出一个时剩下的旧 PID 不能算作新进程。
+func isNewProcess(oldPIDs, curPIDs string) bool {
+	cur := strings.Fields(curPIDs)
+	if len(cur) == 0 {
+		return false
+	}
+	old := map[string]bool{}
+	for _, p := range strings.Fields(oldPIDs) {
+		old[p] = true
+	}
+	for _, p := range cur {
+		if old[p] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) health(ctx context.Context) error {
@@ -155,13 +174,31 @@ func (m *Manager) health(ctx context.Context) error {
 	return nil
 }
 
-// rollback 恢复 known good 版本并重启，返回 DNSMASQ_ROLLED_BACK 或 DNSMASQ_ROLLBACK_FAILED。
-func (m *Manager) rollback(ctx context.Context, knownGood string, cause error) error {
+// 回滚使用独立的时间预算，不受调用方取消或 apply 整体超时的影响。
+const rollbackTimeout = 40 * time.Second
+
+// rollback 先备份即将被覆盖的内容，再恢复 known good 版本并重启，
+// 返回 DNSMASQ_ROLLED_BACK 或 DNSMASQ_ROLLBACK_FAILED。
+func (m *Manager) rollback(ctx context.Context, knownGood, failedContent string, cause error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+	defer cancel()
+
 	backupPath := path.Join(m.o.BackupDir, knownGood)
+	// 被覆盖的内容可能包含只存在于 .add 文件中的人工修改；备份失败也继续回滚，优先恢复 DNS
+	failedBackup := ""
+	if name, err := m.backup(ctx, failedContent); err == nil {
+		failedBackup = path.Join(m.o.BackupDir, name)
+	}
+	withFailed := func(e *apperr.Error) *apperr.Error {
+		if failedBackup != "" {
+			e.With("failed_content_backup", failedBackup)
+		}
+		return e
+	}
 	fail := func(rbErr error) error {
-		return apperr.New(apperr.DnsmasqRollbackFailed, "dnsmasq 生效失败，自动回滚也失败了，需要人工处理",
+		return withFailed(apperr.New(apperr.DnsmasqRollbackFailed, "dnsmasq 生效失败，自动回滚也失败了，需要人工处理",
 			"登录路由器，把 details.backup_path 的内容复制回 dnsmasq.conf.add，然后执行 service restart_dnsmasq").
-			With("cause", errText(cause)).With("rollback_error", errText(rbErr)).With("backup_path", backupPath)
+			With("cause", errText(cause)).With("rollback_error", errText(rbErr)).With("backup_path", backupPath))
 	}
 	content, err := m.readBackup(ctx, knownGood)
 	if err != nil {
@@ -179,9 +216,9 @@ func (m *Manager) rollback(ctx context.Context, knownGood string, cause error) e
 	}); err != nil {
 		return fail(err)
 	}
-	return apperr.New(apperr.DnsmasqRolledBack, "新配置生效失败，已自动回滚到上一个可用版本",
-		"根据 details.cause 修正配置；未生效的修改可以在 backup_dir 的备份中找到").
-		With("cause", errText(cause)).With("restored_backup", backupPath)
+	return withFailed(apperr.New(apperr.DnsmasqRolledBack, "新配置生效失败，已自动回滚到上一个可用版本",
+		"根据 details.cause 修正配置；未生效的内容已备份在 details.failed_content_backup").
+		With("cause", errText(cause)).With("restored_backup", backupPath))
 }
 
 // errText 优先使用 apperr 的中文 message，其他错误用 Error()。

@@ -246,6 +246,7 @@ type Runner interface {
 | `dry_run` | bool | false | 为 true 时只返回 diff，不写入 |
 
 - 已存在的行跳过，结果中列出 `skipped`
+- 拒绝会让 dnsmasq 执行程序或读写任意文件的选项，返回 `INVALID_ARGUMENT`：`dhcp-script`、`dhcp-luascript`、`dhcp-scriptuser`、`conf-script`、`log-facility`、`pid-file`、`dhcp-leasefile`、`dumpfile`、`conf-file`、`conf-dir`、`servers-file`、`enable-tftp`、`tftp-root`、`user`、`group`（保证 §12.2 的"无法执行任意命令"；`dnsmasq_addfile_remove` 不受限制）
 - 文件不存在时创建
 - 写入前把当前内容备份到 `backup_dir`
 - 返回 `added`、`skipped`、diff、新文件的 `sha256`、`pending_apply: true`
@@ -306,7 +307,8 @@ type Runner interface {
 - 第一次调用工具时建立连接，之后复用；每 30 秒发送一次 `keepalive@openssh.com`
 - 每次调用开一个新的 session；用信号量限制同时最多 4 个 session
 - 连接断开时：只读工具自动重连并重试 1 次；修改类和破坏性工具**不自动重试**，直接返回错误
-- 超时：普通命令使用 `router.command_timeout`（默认 15s）；ping 30s；`dnsmasq_apply` 整体 60s
+- 超时：每条命令最多 `router.command_timeout`（默认 15s，ping 也受此限制）；`dnsmasq_apply` 整体 60s；回滚使用独立的 40s 预算，不受调用方取消或 apply 超时影响
+- 命令超时或打开 session 超时时丢弃当前连接，下次调用重新连接；keepalive 在一个间隔内收不到应答也会丢弃连接（应对路由器断电、死机后的"黑洞"连接）
 - host key：只接受 `router.known_hosts` 中已有的记录；不存在或不一致都拒绝连接
 
 ### 5.3 `dnsmasq_apply` 流程
@@ -341,17 +343,18 @@ type Runner interface {
     dnsmasq 不支持 --test → 跳过本步，并在结果中注明 validation_skipped
  2. 记录当前 dnsmasq 的 PID，然后执行 service restart_dnsmasq
     （Asus 的 service 命令是异步通知 rc 重启，命令返回时 dnsmasq 可能还没重启）
- 3. 每 0.5 秒执行一次 pidof dnsmasq，直到出现与第 2 步不同的 PID，最多等待 10 秒
+ 3. 每 0.5 秒执行一次 pidof dnsmasq，直到出现一组非空、且与第 2 步的 PID 没有交集的进程，最多等待 10 秒
+    （Asus 上 dnsmasq 通常有两个进程，只退出一个时剩下的旧 PID 不算新进程）
  4. nslookup <health_check_domain> 127.0.0.1（默认 router.asus.com）
  ✔ 全部成功 → 备份当前内容作为新的 known good，更新 last_mcp_sha256
  ✘ 第 2–4 步任一失败：
-      a. 把 known_good_backup 的内容写回 .add 文件
+      a. 先把当前 .add 内容另存为一份备份（details.failed_content_backup），再把 known_good_backup 的内容写回 .add 文件
       b. service restart_dnsmasq，并重复第 3–4 步检查
       c. 成功 → 更新 last_mcp_sha256 为 known good 的 sha256，返回 DNSMASQ_ROLLED_BACK，附原始错误
          失败 → 返回 DNSMASQ_ROLLBACK_FAILED，附原始错误、回滚错误、备份文件路径
 ```
 
-回滚后，本次未生效的修改会从 `.add` 文件中消失，但每次 add / remove 前的备份仍保留在 `backup_dir` 中。
+回滚后，本次未生效的内容会从 `.add` 文件中消失，但已另存为 `details.failed_content_backup` 指向的备份（包括通过 `accept_external_changes` 带入的人工修改）。
 
 第 1 步只校验 `.add` 本身的语法，无法发现它与主配置之间的冲突；这类问题由第 2–4 步的运行时检查兜底。
 

@@ -34,6 +34,34 @@ func NormalizeInput(lines []string) ([]string, error) {
 	return out, nil
 }
 
+// deniedOptions 是会让 dnsmasq（以 root 运行）执行程序、写入或读取任意文件的选项。
+var deniedOptions = map[string]bool{
+	"dhcp-script": true, "dhcp-luascript": true, "dhcp-scriptuser": true, "conf-script": true,
+	"log-facility": true, "pid-file": true, "dhcp-leasefile": true, "dumpfile": true,
+	"conf-file": true, "conf-dir": true, "servers-file": true,
+	"enable-tftp": true, "tftp-root": true,
+	"user": true, "group": true,
+}
+
+// CheckAllowed 拒绝添加 deniedOptions 中的选项，保证通过 MCP 无法让路由器执行任意命令（spec §12.2）。
+// 注释行不检查；删除操作不调用本函数，已有的危险选项仍可被删除。
+func CheckAllowed(lines []string) error {
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "#") {
+			continue
+		}
+		name, _, _ := strings.Cut(t, "=")
+		name = strings.ToLower(strings.TrimSpace(name))
+		if deniedOptions[name] {
+			return apperr.New(apperr.InvalidArgument,
+				fmt.Sprintf("不允许通过 MCP 添加 %s 选项：它会让 dnsmasq 执行程序或读写任意文件", name),
+				"如确有需要，请人工登录路由器修改 dnsmasq.conf.add")
+		}
+	}
+	return nil
+}
+
 // splitContent 把文件内容拆成行：统一 CRLF，去掉行尾空白，去掉末尾的空行（中间的空行保留）。
 func splitContent(content string) []string {
 	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
@@ -104,10 +132,44 @@ func SHA256(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Diff 基于最长公共子序列生成逐行差异，行首为 " "（不变）、"-"（删除）、"+"（新增）。
+// lcsMaxCells 限制 LCS 表的大小（约 8MB），超过时退化为直接列出删除和新增的行。
+const lcsMaxCells = 1 << 20
+
+// Diff 生成逐行差异，行首为 " "（不变）、"-"（删除）、"+"（新增）。
+// 先去掉相同的首尾部分，只对中间变化的部分做最长公共子序列，避免大文件占用 O(n²) 内存。
 func Diff(oldContent, newContent string) string {
 	a, b := splitContent(oldContent), splitContent(newContent)
+	pre := 0
+	for pre < len(a) && pre < len(b) && a[pre] == b[pre] {
+		pre++
+	}
+	suf := 0
+	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
+		suf++
+	}
+	var sb strings.Builder
+	for _, l := range a[:pre] {
+		sb.WriteString(" " + l + "\n")
+	}
+	diffMiddle(&sb, a[pre:len(a)-suf], b[pre:len(b)-suf])
+	for _, l := range a[len(a)-suf:] {
+		sb.WriteString(" " + l + "\n")
+	}
+	return sb.String()
+}
+
+// diffMiddle 对去掉首尾公共部分后的中间段做 LCS 差异。
+func diffMiddle(sb *strings.Builder, a, b []string) {
 	n, m := len(a), len(b)
+	if (n+1)*(m+1) > lcsMaxCells {
+		for _, l := range a {
+			sb.WriteString("-" + l + "\n")
+		}
+		for _, l := range b {
+			sb.WriteString("+" + l + "\n")
+		}
+		return
+	}
 	dp := make([][]int, n+1)
 	for i := range dp {
 		dp[i] = make([]int, m+1)
@@ -121,7 +183,6 @@ func Diff(oldContent, newContent string) string {
 			}
 		}
 	}
-	var sb strings.Builder
 	i, j := 0, 0
 	for i < n && j < m {
 		switch {
@@ -143,5 +204,4 @@ func Diff(oldContent, newContent string) string {
 	for ; j < m; j++ {
 		sb.WriteString("+" + b[j] + "\n")
 	}
-	return sb.String()
 }

@@ -143,6 +143,17 @@ func TestRenderKeepsValidUTF8(t *testing.T) {
 	}
 }
 
+func TestRenderLimitHoldsWithManyInvalidBytes(t *testing.T) {
+	lines := make([]string, 2000)
+	for i := range lines {
+		lines[i] = strings.Repeat("\xffa", 15)
+	}
+	text, truncated := Render(lines, MaxOutputBytes)
+	if len(text) > MaxOutputBytes || !truncated || !utf8.ValidString(text) {
+		t.Fatalf("len=%d truncated=%v valid=%v", len(text), truncated, utf8.ValidString(text))
+	}
+}
+
 func TestFilterText(t *testing.T) {
 	lines := []string{"[1.0] eth6: link up", "[2.0] Out of memory: Kill process", "[3.0] ETH6 down"}
 	got := FilterText(lines, "eth6", 0)

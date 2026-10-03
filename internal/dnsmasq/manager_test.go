@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/rshun/merlin-mcp/internal/apperr"
 )
 
 const original = "dhcp-mac=set:openwrt,AA:BB:CC:00:00:01\n"
@@ -128,6 +130,19 @@ func TestContentTravelsOnlyViaStdin(t *testing.T) {
 	w := f.CallsFor("addfile_write")
 	if len(w) != 1 || !strings.Contains(string(w[0].Stdin), evil) {
 		t.Fatalf("写入内容应通过 stdin 传输: %+v", w)
+	}
+}
+
+func TestAddRejectsDangerousOptionButRemoveAllowsIt(t *testing.T) {
+	f := newFakeRouter()
+	f.exists, f.content = true, original+"dhcp-script=/old\n"
+	m, _ := newManager(t, f)
+	_, err := m.Edit(context.Background(), OpAdd, []string{"dhcp-script=/sbin/reboot"}, false)
+	if apperr.CodeOf(err) != apperr.InvalidArgument || len(f.Calls()) != 0 {
+		t.Fatalf("添加危险选项应在执行任何命令前被拒绝: err=%v calls=%d", err, len(f.Calls()))
+	}
+	if _, err := m.Edit(context.Background(), OpRemove, []string{"dhcp-script=/old"}, false); err != nil {
+		t.Fatalf("删除危险选项应被允许: %v", err)
 	}
 }
 

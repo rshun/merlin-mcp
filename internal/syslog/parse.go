@@ -155,6 +155,12 @@ func FilterText(lines []string, keyword string, n int) []string {
 // Render 拼接日志行。超过 maxBytes 时从前面丢弃整行、保留最新的内容；
 // 最新的一行本身就超长时只保留它的末尾。结果总是合法的 UTF-8。
 func Render(lines []string, maxBytes int) (string, bool) {
+	// 先替换非法 UTF-8 再计算长度：每个非法字节会变成 3 字节的替换字符
+	clean := make([]string, len(lines))
+	for i, l := range lines {
+		clean[i] = strings.ToValidUTF8(l, "�")
+	}
+	lines = clean
 	total, start := 0, len(lines)
 	for i := len(lines) - 1; i >= 0; i-- {
 		n := len(lines[i]) + 1
@@ -173,5 +179,5 @@ func Render(lines []string, maxBytes int) (string, bool) {
 	if text != "" {
 		text += "\n"
 	}
-	return strings.ToValidUTF8(text, "�"), start > 0
+	return text, start > 0
 }
