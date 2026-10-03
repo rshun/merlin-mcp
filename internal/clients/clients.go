@@ -44,6 +44,7 @@ type Inputs struct {
 	ARP      []ARPEntry
 	Static   map[string]Static
 	Wireless map[string]string // MAC → 频段（2.4G/5G/6G/unknown）
+	Guest    map[string]bool   // MAC → 是否连接在访客网络上
 }
 
 // Client 是 clients_list 返回的一台设备。
@@ -51,7 +52,8 @@ type Client struct {
 	MAC               string `json:"mac"`
 	IP                string `json:"ip,omitempty"`
 	Hostname          string `json:"hostname,omitempty"`
-	Connection        string `json:"connection"` // wired / 2.4G / 5G / 6G / unknown
+	Connection        string `json:"connection"`      // wired / 2.4G / 5G / 6G / unknown
+	Guest             bool   `json:"guest,omitempty"` // 连接在访客网络（wlN.M 虚拟接口）上
 	Static            bool   `json:"static"`
 	LeaseRemainingSec *int64 `json:"lease_remaining_sec,omitempty"`
 	LeaseInfinite     bool   `json:"lease_infinite,omitempty"`
@@ -87,12 +89,13 @@ func ParseLeases(s string) []Lease {
 	return out
 }
 
-// ParseARP 解析 /proc/net/arp，跳过表头和未完成解析（flags 0x0）的条目。
+// ParseARP 解析 /proc/net/arp，跳过表头、未完成解析（flags 0x0）的条目，
+// 以及不在局域网网桥（br*）上的条目——例如 WAN 口上的光猫等上游设备。
 func ParseARP(s string) []ARPEntry {
 	var out []ARPEntry
 	for _, line := range strings.Split(s, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 6 || f[0] == "IP" {
+		if len(f) < 6 || f[0] == "IP" || !strings.HasPrefix(f[5], "br") {
 			continue
 		}
 		mac := normMAC(f[3])
@@ -160,6 +163,9 @@ func bandOf(nband string) string {
 	return "unknown"
 }
 
+// 租约第一列小于此值时视为剩余秒数而不是 Unix 时间戳（1e9 约为 2001 年）。
+const relativeExpiryLimit = 1_000_000_000
+
 // Merge 以 MAC 为主键合并数据。
 // IP 优先级：ARP > 租约 > 静态分配；主机名优先级：租约 > 静态分配。
 func Merge(in Inputs) []Client {
@@ -182,9 +188,14 @@ func Merge(in Inputs) []Client {
 		if l.Hostname != "" {
 			c.Hostname = l.Hostname
 		}
-		if l.Expiry == 0 {
+		switch {
+		case l.Expiry == 0:
 			c.LeaseInfinite = true
-		} else {
+		case l.Expiry < relativeExpiryLimit:
+			// Asus 的 dnsmasq 启用了 HAVE_BROKEN_RTC，第一列是 dnsmasq 上次写文件时的剩余秒数（近似值）
+			rem := l.Expiry
+			c.LeaseRemainingSec = &rem
+		default:
 			rem := l.Expiry - in.Now.Unix()
 			if rem < 0 {
 				rem = 0
@@ -202,6 +213,7 @@ func Merge(in Inputs) []Client {
 
 	out := make([]Client, 0, len(byMAC))
 	for _, c := range byMAC {
+		c.Guest = in.Guest[c.MAC]
 		switch {
 		case in.Wireless[c.MAC] != "":
 			c.Connection = in.Wireless[c.MAC]
@@ -235,8 +247,8 @@ func less(a, b Client) bool {
 
 var baseKeys = []string{
 	"dhcp_staticlist", "dhcp_hostnames",
-	"wl0_ifname", "wl0_nband", "wl1_ifname", "wl1_nband",
-	"wl2_ifname", "wl2_nband", "wl3_ifname", "wl3_nband",
+	"wl0_ifname", "wl0_nband", "wl0_vifs", "wl1_ifname", "wl1_nband", "wl1_vifs",
+	"wl2_ifname", "wl2_nband", "wl2_vifs", "wl3_ifname", "wl3_nband", "wl3_vifs",
 }
 
 // Fetch 两次 SSH 调用：先取租约、ARP、nvram，再按无线接口查询关联列表。
@@ -264,17 +276,26 @@ func Fetch(ctx context.Context, r runner.Runner) ([]Client, error) {
 		ARP:      ParseARP(sec["arp"]),
 		Static:   ParseStaticList(kv["dhcp_staticlist"], kv["dhcp_hostnames"]),
 		Wireless: map[string]string{},
+		Guest:    map[string]bool{},
 	}
 
+	// 主接口（wlN_ifname）和访客网络虚拟接口（wlN_vifs，如 wl1.1）都要查询；虚拟接口继承主接口的频段
 	bands := map[string]string{}
+	guestIf := map[string]bool{}
 	var parts []string
-	for i := 0; i < 4; i++ {
-		ifname := strings.TrimSpace(kv[fmt.Sprintf("wl%d_ifname", i)])
-		if ifname == "" || !shell.ValidIfName(ifname) {
-			continue
+	addIf := func(ifname, band string, guest bool) {
+		if ifname == "" || !shell.ValidIfName(ifname) || bands[ifname] != "" {
+			return
 		}
-		bands[ifname] = bandOf(kv[fmt.Sprintf("wl%d_nband", i)])
+		bands[ifname], guestIf[ifname] = band, guest
 		parts = append(parts, routercmd.Marker(ifname), "wl -i "+shell.Quote(ifname)+" assoclist 2>/dev/null")
+	}
+	for i := 0; i < 4; i++ {
+		band := bandOf(kv[fmt.Sprintf("wl%d_nband", i)])
+		addIf(strings.TrimSpace(kv[fmt.Sprintf("wl%d_ifname", i)]), band, false)
+		for _, vif := range strings.Fields(kv[fmt.Sprintf("wl%d_vifs", i)]) {
+			addIf(vif, band, true)
+		}
 	}
 	if len(parts) > 0 {
 		res, err := r.Run(ctx, runner.Op("clients_assoc", strings.Join(parts, "; ")), nil)
@@ -285,6 +306,9 @@ func Fetch(ctx context.Context, r runner.Runner) ([]Client, error) {
 		for ifname, band := range bands {
 			for _, mac := range ParseAssoc(asec[ifname]) {
 				in.Wireless[mac] = band
+				if guestIf[ifname] {
+					in.Guest[mac] = true
+				}
 			}
 		}
 	}

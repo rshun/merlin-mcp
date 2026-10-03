@@ -188,11 +188,11 @@ type Runner interface {
 | DHCP 租约 | `/var/lib/misc/dnsmasq.leases` |
 | ARP 表 | `/proc/net/arp` |
 | 静态 IP 分配 | nvram `dhcp_staticlist` |
-| 无线关联 | 对 nvram `wl_ifnames` 中的每个接口执行 `wl -i <if> assoclist` |
+| 无线关联 | 对 nvram `wlN_ifname` 及访客网络虚拟接口 `wlN_vifs` 中的每个接口执行 `wl -i <if> assoclist` |
 
-每台设备返回：MAC、IP、主机名、连接方式（`wired` / `2.4G` / `5G` / `6G` / `unknown`）、是否静态分配、租约剩余秒数、是否在 ARP 表中。
+每台设备返回：MAC、IP、主机名、连接方式（`wired` / `2.4G` / `5G` / `6G` / `unknown`）、是否在访客网络（`guest`）、是否静态分配、租约剩余秒数、是否在 ARP 表中。
 
-连接方式判断：在某个无线接口的关联列表中出现 → 该接口对应的频段；不在任何无线列表但在 ARP 中 → `wired`；其他情况 → `unknown`。
+连接方式判断：在某个无线接口的关联列表中出现 → 该接口对应的频段（访客接口继承主接口频段）；不在任何无线列表但在 ARP 中 → `wired`；其他情况 → `unknown`。ARP 只统计局域网网桥（`br*`）上的条目。
 
 #### `conntrack_status`
 
@@ -560,16 +560,26 @@ claude mcp add --scope user --transport http merlin http://127.0.0.1:8765/mcp
 
 ## 10. 需要在实施时验证的假设
 
-以下内容依赖具体固件版本，在收集真实样本时确认，每项都有备选方案：
+以下内容依赖具体固件版本。2026-10-03 已在 RT-AX86U / Merlin 388.12_2 上用真实输出核对（脱敏样本见 `testdata/real/`）：
 
-| 假设 | 不成立时的处理 |
-|---|---|
-| 路由器上的 dnsmasq 支持 `--test` | 跳过第 1 步语法校验，只依赖运行时检查和回滚；`check` 命令会报告这一点 |
-| `router.asus.com` 能被本机 dnsmasq 解析 | 改用配置中的其他域名 |
-| `wl -i <if> assoclist` 可用 | 连接方式统一返回 `unknown` |
-| CPU 温度可从已知路径读取 | 返回 `null` |
-| syslog 位于 `/jffs/syslog.log` 或 `/tmp/syslog.log` | 在配置中显式指定路径 |
-| busybox `ping` 支持 `-W` | 去掉 `-W`，依靠命令超时 |
+| 假设 | 核对结果 | 不成立时的处理 |
+|---|---|---|
+| 路由器上的 dnsmasq 支持 `--test` | ✓ 支持，`syntax check OK` | 跳过第 1 步语法校验，只依赖运行时检查和回滚；`check` 命令会报告这一点 |
+| `router.asus.com` 能被本机 dnsmasq 解析 | ✓ 解析到路由器 LAN 地址 | 改用配置中的其他域名 |
+| `wl -i <if> assoclist` 可用 | ✓ 输出 `assoclist <MAC>` | 连接方式统一返回 `unknown` |
+| CPU 温度可从已知路径读取 | ✓ `thermal_zone0`（毫摄氏度）；`/proc/dmu/temperature` 不存在 | 返回 `null` |
+| syslog 位于 `/jffs/syslog.log` 或 `/tmp/syslog.log` | ✓ 两处都有，`auto` 优先使用 `/jffs/syslog.log` | 在配置中显式指定路径 |
+| busybox `ping` 支持 `-W` | ✓ | 去掉 `-W`，依靠命令超时 |
+| `date '+%s %z'` 输出两段 | ✓ | — |
+| `pidof dnsmasq` 返回多个进程 | ✓ 两个进程，PID 集合判断必要 | — |
+
+核对中发现并已处理的固件差异：
+
+- `dnsmasq.leases` 第一列是剩余秒数，不是到期时间戳（Asus 的 dnsmasq 启用了 `HAVE_BROKEN_RTC`）：小于 1e9 的值按剩余秒数处理，是 dnsmasq 上次写文件时的近似值
+- ARP 表中包含 WAN 口（`eth0`）上的上游设备：只统计局域网网桥（`br*`）上的条目
+- 访客网络使用虚拟接口（`wl0.1`、`wl1.1`，见 `wlN_vifs`）：同样查询关联列表，频段继承主接口，并标记 `guest: true`
+- dmesg 含 ANSI 颜色转义：返回前去掉
+- 样本 syslog 中没有 WAN 事件，`wan_status` 的事件匹配模式尚未用真实 WAN 掉线日志验证
 
 ## 11. 不在本期范围内
 

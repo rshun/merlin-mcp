@@ -1,0 +1,20 @@
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f820000> JOIN blog<0xffffffc02fe1ce40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f820000> JOIN blog<0xffffffc02fe1ce40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f820000> JOIN blog<0xffffffc02ff357c0>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02ff357c0> JOIN blog<0xffffffc02f80ce40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02ff357c0> JOIN blog<0xffffffc02f80ce40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02ff357c0> JOIN blog<0xffffffc02f80ce40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f80ce40> JOIN blog<0xffffffc02ff317c0>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f80ce40> JOIN blog<0xffffffc02ff317c0>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f80ce40> JOIN blog<0xffffffc02ff317c0>[0m
+br0: received packet on eth7.0 with own address as source address
+br0: received packet on eth7.0 with own address as source address
+br0: received packet on eth7.0 with own address as source address
+br0: received packet on eth7.0 with own address as source address
+CFG80211-ERROR) wl_cfg80211_sta_info : GET STA INFO failed, -21
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f8677c0> JOIN blog<0xffffffc02fed8e40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f8677c0> JOIN blog<0xffffffc02fed8e40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f8677c0> JOIN blog<0xffffffc02fed8e40>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f8677c0> JOIN blog<0xffffffc02f84f7c0>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f8677c0> JOIN blog<0xffffffc02f84f7c0>[0m
+[0;33;41mFCACHEfc_vblog_list_add ERROR: Duplicate blog: list blog<0xffffffc02f8677c0> JOIN blog<0xffffffc02f84f7c0>[0m

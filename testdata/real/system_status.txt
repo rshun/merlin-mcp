@@ -1,0 +1,24 @@
+@@MERLINMCP:uptime@@
+197640.23 779976.17
+@@MERLINMCP:loadavg@@
+1.48 1.27 1.10 1/166 11284
+@@MERLINMCP:meminfo@@
+MemTotal:         933964 kB
+MemFree:          569680 kB
+MemAvailable:     560112 kB
+Buffers:               0 kB
+Cached:            31448 kB
+SwapCached:            0 kB
+Active:            58688 kB
+Inactive:          14508 kB
+@@MERLINMCP:stat1@@
+cpu  265815 0 754081 77711713 3 26 21222 0 0 0
+@@MERLINMCP:stat2@@
+cpu  265815 0 754081 77711713 3 26 21222 0 0 0
+@@MERLINMCP:temp@@
+71892
+@@MERLINMCP:nvram@@
+productid=RT-AX86U
+firmver=3.0.0.4
+buildno=388.12
+extendno=2

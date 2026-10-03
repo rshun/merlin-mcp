@@ -1,0 +1,30 @@
+Oct  3 15:41:15 dnsmasq-dhcp[2534]: DHCPDISCOVER(br0) aa:bb:cc:00:00:13 
+Oct  3 15:41:15 dnsmasq-dhcp[2534]: DHCPOFFER(br0) 192.0.2.18 aa:bb:cc:00:00:13 
+Oct  3 15:41:15 dnsmasq-dhcp[2534]: DHCPDISCOVER(br0) aa:bb:cc:00:00:13 
+Oct  3 15:41:15 dnsmasq-dhcp[2534]: DHCPOFFER(br0) 192.0.2.18 aa:bb:cc:00:00:13 
+Oct  3 15:41:15 dnsmasq-dhcp[2534]: DHCPDISCOVER(br0) aa:bb:cc:00:00:13 
+Oct  3 15:41:15 dnsmasq-dhcp[2534]: DHCPOFFER(br0) 192.0.2.18 aa:bb:cc:00:00:13 
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPREQUEST(br0) 192.0.2.18 aa:bb:cc:00:00:13 
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPACK(br0) 192.0.2.18 aa:bb:cc:00:00:13 mac-1
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPREQUEST(br0) 192.0.2.18 aa:bb:cc:00:00:13 
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPACK(br0) 192.0.2.18 aa:bb:cc:00:00:13 mac-1
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPREQUEST(br0) 192.0.2.18 aa:bb:cc:00:00:13 
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPACK(br0) 192.0.2.18 aa:bb:cc:00:00:13 mac-1
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPREQUEST(br0) 192.0.2.18 aa:bb:cc:00:00:13 
+Oct  3 15:41:16 dnsmasq-dhcp[2534]: DHCPACK(br0) 192.0.2.18 aa:bb:cc:00:00:13 mac-1
+Oct  3 15:43:58 wlceventd: wlceventd_proc_event(645): eth7: Deauth_ind AA:BB:CC:00:00:1B, status: 0, reason: Disassociated because sending station is leaving (or has left) BSS (8), rssi:0
+Oct  3 15:43:58 hostapd: eth7: STA aa:bb:cc:00:00:1b IEEE 802.11: disassociated
+Oct  3 15:43:58 wlceventd: wlceventd_proc_event(685): wl1.1: Auth AA:BB:CC:00:00:1C, status: Successful (0), rssi:-69
+Oct  3 15:43:58 hostapd: wl1.1: STA aa:bb:cc:00:00:1c IEEE 802.11: associated
+Oct  3 15:43:58 wlceventd: wlceventd_proc_event(722): wl1.1: Assoc AA:BB:CC:00:00:1C, status: Successful (0), rssi:-69
+Oct  3 15:43:58 hostapd: wl1.1: STA aa:bb:cc:00:00:1c RADIUS: starting accounting session 0000000000000000
+Oct  3 15:43:58 hostapd: wl1.1: STA aa:bb:cc:00:00:1c WPA: pairwise key handshake completed (RSN)
+Oct  3 15:43:58 dnsmasq-dhcp[2534]: DHCPREQUEST(br2) 198.18.102.54 aa:bb:cc:00:00:1c 
+Oct  3 15:43:58 dnsmasq-dhcp[2534]: DHCPACK(br2) 198.18.102.54 aa:bb:cc:00:00:1c 
+Oct  3 15:45:12 wlceventd: wlceventd_proc_event(645): wl1.1: Deauth_ind AA:BB:CC:00:00:1C, status: 0, reason: Disassociated due to inactivity (4), rssi:-70
+Oct  3 15:45:12 hostapd: wl1.1: STA aa:bb:cc:00:00:1c IEEE 802.11: disassociated
+Oct  3 15:45:12 wlceventd: wlceventd_proc_event(645): wl1.1: Deauth_ind AA:BB:CC:00:00:1C, status: 0, reason: Previous authentication no longer valid (2), rssi:-70
+Oct  3 15:45:12 hostapd: wl1.1: STA aa:bb:cc:00:00:1c IEEE 802.11: disassociated
+Oct  3 15:45:13 wlceventd: wlceventd_proc_event(662): wl1.1: Disassoc AA:BB:CC:00:00:1C, status: 0, reason: Disassociated because sending station is leaving (or has left) BSS (8), rssi:0
+Oct  3 15:45:13 hostapd: wl1.1: STA aa:bb:cc:00:00:1c IEEE 802.11: disassociated
+Oct  3 15:48:43 dropbear[11069]: Child connection from 192.0.2.61:53285

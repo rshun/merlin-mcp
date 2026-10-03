@@ -1,0 +1,4 @@
+wan0_state_t=2
+wan0_sbstate_t=0
+wan0_auxstate_t=0
+wan0_proto=pppoe

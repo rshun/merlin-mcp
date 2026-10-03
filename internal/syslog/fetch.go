@@ -3,6 +3,7 @@ package syslog
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -81,12 +82,16 @@ func dropPartial(s string) string {
 	return s
 }
 
-// FetchKernel 读取 dmesg，返回非空行。
+// ansiRe 匹配终端颜色等 ANSI 转义序列（Broadcom 驱动的 dmesg 输出里很常见）。
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+// FetchKernel 读取 dmesg，去掉 ANSI 转义后返回非空行。
 func FetchKernel(ctx context.Context, r runner.Runner) ([]string, error) {
 	out, err := runner.Output(ctx, r, runner.Op("dmesg", "dmesg"))
 	if err != nil {
 		return nil, err
 	}
+	out = ansiRe.ReplaceAllString(out, "")
 	var lines []string
 	for _, l := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		if l != "" {

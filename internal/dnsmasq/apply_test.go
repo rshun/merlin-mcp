@@ -2,6 +2,8 @@ package dnsmasq
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -210,5 +212,20 @@ func TestApplyWithoutPriorEditCreatesBaseline(t *testing.T) {
 	}
 	if store.Get().Dnsmasq.KnownGoodBackup == "" {
 		t.Fatal("应记录 known good")
+	}
+}
+
+// 真实路由器上 pidof dnsmasq 返回两个进程。
+func TestIsNewProcessRealPidofSample(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "real", "pidof.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := strings.TrimSpace(string(data))
+	if len(strings.Fields(old)) != 2 {
+		t.Fatalf("样本应有两个 PID: %q", old)
+	}
+	if isNewProcess(old, strings.Fields(old)[1]) || isNewProcess(old, "") || !isNewProcess(old, "3001 3000") {
+		t.Fatal("PID 集合判断不正确")
 	}
 }
