@@ -105,5 +105,15 @@ func writeAtomic(path string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	// Windows 上其他进程（杀毒、索引）短暂打开目标文件时 rename 会失败，稍等后重试
+	for attempt := 0; ; attempt++ {
+		err = renameFile(tmp, path)
+		if err == nil || attempt >= 4 {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
+
+// renameFile 可在测试中替换。
+var renameFile = os.Rename

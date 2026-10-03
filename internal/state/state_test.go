@@ -73,6 +73,28 @@ func TestOpenCorruptFileFails(t *testing.T) {
 	}
 }
 
+// Windows 上杀毒软件或索引服务短暂打开文件时，rename 会返回 Access is denied，需要重试。
+func TestUpdateRetriesTransientRenameFailure(t *testing.T) {
+	failures := 2
+	orig := renameFile
+	renameFile = func(from, to string) error {
+		if failures > 0 {
+			failures--
+			return errors.New("Access is denied.")
+		}
+		return orig(from, to)
+	}
+	defer func() { renameFile = orig }()
+
+	s, _ := Open(t.TempDir())
+	if err := s.Update(func(st *State) error { st.Dnsmasq.LastMCPSHA256 = "x"; return nil }); err != nil {
+		t.Fatalf("短暂的 rename 失败应被重试: %v", err)
+	}
+	if failures != 0 {
+		t.Fatal("rename 应被重试")
+	}
+}
+
 func TestGetReturnsDeepCopy(t *testing.T) {
 	s, _ := Open(t.TempDir())
 	_ = s.Update(func(st *State) error {
