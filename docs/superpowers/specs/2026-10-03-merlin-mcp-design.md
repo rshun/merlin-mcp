@@ -78,8 +78,11 @@ merlin-mcp/
 ├── cmd/merlin-mcp/main.go     # 子命令 serve / check / version；组装模块；信号处理
 ├── internal/
 │   ├── config/    # 加载与校验 YAML 配置
+│   ├── apperr/    # 错误码与错误结构
+│   ├── runner/    # Runner 接口、Result、只读重试包装；runnertest/ 为测试用假实现
+│   ├── routercmd/ # 输出分段标记、nvram 白名单读取脚本、路由器时间解析
 │   ├── sshx/      # SSH 客户端，实现 Runner 接口
-│   ├── shell/     # Quote() 单引号转义；域名/IP/进程名/关键字校验
+│   ├── shell/     # Quote() 单引号转义；域名/IP/进程名/接口名校验
 │   ├── syslog/    # 日志解析与过滤（纯函数）
 │   ├── status/    # 系统、WAN、conntrack 状态采集与解析
 │   ├── clients/   # 合并租约、ARP、静态分配、无线关联列表（纯函数）
@@ -139,11 +142,11 @@ type Runner interface {
 | `include_rotated` | bool | false | 是否同时读取轮转出去的 `<syslog>-1` 文件 |
 
 - 日志路径：配置为 `auto` 时，先找 `/jffs/syslog.log`，不存在再找 `/tmp/syslog.log`
-- 文件在 Debian 侧过滤：最多读取 4MB（超出时只读取文件末尾 4MB）
+- 文件在 Debian 侧过滤：每个文件最多读取末尾 4MB
 - 过滤顺序：时间 → 进程 → 关键字，按时间顺序取最后 `lines` 行
 - `since` 相对于**路由器当前时间**计算（通过 `date +%s` 获取）。syslog 时间戳没有年份，按"不晚于路由器当前时间的最近一个日期"推断
 - 无法解析时间戳的行，保留并归入前一行的时间
-- 返回内容上限 64KB，超出时截断，并在结果中注明 `truncated: true`
+- 返回内容上限 64KB，超出时丢弃较早的行、保留最新的行，并在结果中注明 `truncated: true`
 
 #### `kernel_log_read`
 
@@ -332,19 +335,23 @@ type Runner interface {
 ```
 加锁（与 add / remove 共用一把锁）
  0. 检查外部修改（见上）
- 1. 语法校验：把当前 .add 内容写到 /tmp/merlin-mcp-test.conf，执行
-       dnsmasq --test -C /tmp/merlin-mcp-test.conf
+ 1. 语法校验（文件存在时）：直接对 .add 文件执行
+       dnsmasq --test -C <dnsmasq_add 路径>
     失败 → 返回 DNSMASQ_VALIDATION_FAILED（不重启，线上配置不受影响）
- 2. service restart_dnsmasq
- 3. 每 0.5 秒执行一次 pidof dnsmasq，最多等待 5 秒
+    dnsmasq 不支持 --test → 跳过本步，并在结果中注明 validation_skipped
+ 2. 记录当前 dnsmasq 的 PID，然后执行 service restart_dnsmasq
+    （Asus 的 service 命令是异步通知 rc 重启，命令返回时 dnsmasq 可能还没重启）
+ 3. 每 0.5 秒执行一次 pidof dnsmasq，直到出现与第 2 步不同的 PID，最多等待 10 秒
  4. nslookup <health_check_domain> 127.0.0.1（默认 router.asus.com）
- ✔ 全部成功 → 备份当前内容作为新的 known good，更新 last_mcp_sha256，写审计日志
+ ✔ 全部成功 → 备份当前内容作为新的 known good，更新 last_mcp_sha256
  ✘ 第 2–4 步任一失败：
       a. 把 known_good_backup 的内容写回 .add 文件
       b. service restart_dnsmasq，并重复第 3–4 步检查
-      c. 成功 → 返回 DNSMASQ_ROLLED_BACK，附原始错误
+      c. 成功 → 更新 last_mcp_sha256 为 known good 的 sha256，返回 DNSMASQ_ROLLED_BACK，附原始错误
          失败 → 返回 DNSMASQ_ROLLBACK_FAILED，附原始错误、回滚错误、备份文件路径
 ```
+
+回滚后，本次未生效的修改会从 `.add` 文件中消失，但每次 add / remove 前的备份仍保留在 `backup_dir` 中。
 
 第 1 步只校验 `.add` 本身的语法，无法发现它与主配置之间的冲突；这类问题由第 2–4 步的运行时检查兜底。
 
@@ -361,10 +368,12 @@ type Runner interface {
  1. confirm 不为 true → CONFIRM_REQUIRED
  2. 读取 state.json 中的 reboot 记录；按 reboot.timezone 计算"今天"的日期
     今天由 MCP 发起的重启次数 ≥ max_per_day → REBOOT_QUOTA_EXCEEDED（附上次重启时间）
- 3. 写入重启记录（原子写入 + fsync），写审计日志
- 4. 在路由器上执行：( sleep 2; reboot ) >/dev/null 2>&1 &
+ 3. 写入重启记录（原子写入 + fsync）
+ 4. 在路由器上执行：nohup sh -c 'sleep 2; reboot' >/dev/null 2>&1 </dev/null &
  5. 主动关闭 SSH 连接，返回"已发出重启指令"
 ```
+
+审计日志由工具层统一在调用返回后写入（所有修改类工具都一样）。
 
 - 重启记录在执行命令**之前**落盘：即使第 4 步结果不明确，当天的额度也视为已用
 - 只统计由 MCP 发起的重启；在路由器网页上手动重启、断电等情况不计入
@@ -398,7 +407,7 @@ router:
   known_hosts: /home/rshun/.ssh/known_hosts      # 直接使用 rshun 现有的 known_hosts（支持哈希格式）
   command_timeout: 15s
 
-allow_mutations: true
+allow_mutations: true          # 未配置时默认为 false（只读）
 
 paths:
   dnsmasq_add: /jffs/configs/dnsmasq.conf.add
