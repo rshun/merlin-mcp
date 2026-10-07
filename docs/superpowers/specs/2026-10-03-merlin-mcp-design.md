@@ -189,8 +189,16 @@ type Runner interface {
 | ARP 表 | `/proc/net/arp` |
 | 静态 IP 分配 | nvram `dhcp_staticlist` |
 | 无线关联 | 对 nvram `wlN_ifname` 及访客网络虚拟接口 `wlN_vifs` 中的每个接口执行 `wl -i <if> assoclist` |
+| 无线连接信息 | 对每台无线设备在其所在接口上执行 `wl -i <if> sta_info <MAC>`（一次 SSH 调用） |
 
-每台设备返回：MAC、IP、主机名、连接方式（`wired` / `2.4G` / `5G` / `6G` / `unknown`）、是否在访客网络（`guest`）、是否静态分配、租约剩余秒数、是否在 ARP 表中。
+每台设备返回：MAC、IP、主机名、连接方式（`wired` / `2.4G` / `5G` / `6G` / `unknown`）、是否在访客网络（`guest`）、是否静态分配、租约剩余秒数、是否在 ARP 表中。无线设备另外返回以下字段（有线设备或取不到时省略）：
+
+| 字段 | 来源（`sta_info` 输出） |
+|---|---|
+| `rssi_dbm` | `smoothed rssi`；没有该行时取 `per antenna average rssi of rx data frames` 中最强的一路（0 表示该天线无数据，忽略） |
+| `tx_rate_mbps` | `rate of last tx pkt` 的第一个值（后面的是回退速率），kbps 换算为 Mbps，保留一位小数；0 视为无数据 |
+| `rx_rate_mbps` | `rate of last rx pkt`，换算同上 |
+| `connected_sec` | `in network N seconds` |
 
 连接方式判断：在某个无线接口的关联列表中出现 → 该接口对应的频段（访客接口继承主接口频段）；不在任何无线列表但在 ARP 中 → `wired`；其他情况 → `unknown`。ARP 只统计局域网网桥（`br*`）上的条目。
 
@@ -576,6 +584,7 @@ claude mcp add --scope user --transport http merlin http://127.0.0.1:8765/mcp
 | 路由器上的 dnsmasq 支持 `--test` | ✓ 支持，`syntax check OK` | 跳过第 1 步语法校验，只依赖运行时检查和回滚；`check` 命令会报告这一点 |
 | `router.asus.com` 能被本机 dnsmasq 解析 | ✓ 解析到路由器 LAN 地址 | 改用配置中的其他域名 |
 | `wl -i <if> assoclist` 可用 | ✓ 输出 `assoclist <MAC>` | 连接方式统一返回 `unknown` |
+| `wl -i <if> sta_info <MAC>` 含 `smoothed rssi`、`rate of last tx/rx pkt`、`in network` | ✓（2026-10-07 核对） | RSSI 退回各天线平均值；其他字段取不到则省略 |
 | CPU 温度可从已知路径读取 | ✓ `thermal_zone0`（毫摄氏度）；`/proc/dmu/temperature` 不存在 | 返回 `null` |
 | syslog 位于 `/jffs/syslog.log` 或 `/tmp/syslog.log` | ✓ 两处都有，`auto` 优先使用 `/jffs/syslog.log` | 在配置中显式指定路径 |
 | busybox `ping` 支持 `-W` | ✓ | 去掉 `-W`，依靠命令超时 |

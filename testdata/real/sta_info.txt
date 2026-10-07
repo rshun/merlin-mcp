@@ -1,0 +1,52 @@
+[VER 8] STA AA:BB:CC:00:00:0C:
+	 chanspec 1 (0x1001)
+	 aid:16 
+	 rateset [ 1 2 5.5 6 9 11 12 18 24 36 48 54 ]
+	 idle 5 seconds
+	 in network 517723 seconds
+	 state: AUTHENTICATED ASSOCIATED AUTHORIZED
+	 connection: SECURED
+	 auth: WPA2-PSK
+	 crypto: AES_CCM
+	 flags 0x1e03a: WME N_CAP AMPDU AMSDU
+	 HT caps 0x100c: 
+	 tx total pkts: 2550137
+	 tx total bytes: 737880509
+	 tx ucast pkts: 88880
+	 tx ucast bytes: 8172747
+	 tx mcast/bcast pkts: 2461257
+	 tx mcast/bcast bytes: 729707762
+	 tx failures: 2
+	 rx data pkts: 103166
+	 rx data bytes: 38978205
+	 rx data dur: 0
+	 rx ucast pkts: 30125
+	 rx ucast bytes: 15546457
+	 rx mcast/bcast pkts: 73041
+	 rx mcast/bcast bytes: 23431748
+	 rate of last tx pkt: 13000 kbps - 2000 kbps
+	 rate of last rx pkt: 65000 kbps
+	 rx decrypt succeeds: 102140
+	 rx decrypt failures: 0
+	 tx data pkts retried: 3
+	 per antenna rssi of last rx data frame: -31 -36 -27 0
+	 per antenna average rssi of rx data frames: -30 -36 -27 0
+	 per antenna noise floor: -90 -92 -91 0
+	 tx total pkts sent: 104964
+	 tx pkts retries: 22450
+	 tx pkts retry exhausted: 2
+	 tx FW total pkts sent: 0
+	 tx FW pkts retries: 0
+	 tx FW pkts retry exhausted: 0
+	 rx total pkts retried: 7461
+MCS SET : [ 0 1 2 3 4 5 6 7 ]
+smoothed rssi: -27
+tx nrate
+mcs index 1 stf mode 0 auto
+rx nrate
+mcs index 7 stf mode 0 auto
+wnm
+0x0:
+VENDOR OUI VALUE[0] 00:50:F2 
+link bandwidth = 20 MHZ 
+RRM capability = 0x0

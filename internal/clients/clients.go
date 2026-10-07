@@ -4,6 +4,7 @@ package clients
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/netip"
 	"regexp"
 	"sort"
@@ -43,8 +44,17 @@ type Inputs struct {
 	Leases   []Lease
 	ARP      []ARPEntry
 	Static   map[string]Static
-	Wireless map[string]string // MAC → 频段（2.4G/5G/6G/unknown）
-	Guest    map[string]bool   // MAC → 是否连接在访客网络上
+	Wireless map[string]string  // MAC → 频段（2.4G/5G/6G/unknown）
+	Guest    map[string]bool    // MAC → 是否连接在访客网络上
+	Sta      map[string]StaInfo // MAC → 无线连接信息
+}
+
+// StaInfo 是 `wl sta_info` 中与无线连接质量相关的字段，取不到的字段为 nil。
+type StaInfo struct {
+	RSSI         *int     `json:"rssi_dbm,omitempty"`      // 信号强度，越接近 0 越强
+	TxRateMbps   *float64 `json:"tx_rate_mbps,omitempty"`  // 路由器发给设备的最近一个包的速率
+	RxRateMbps   *float64 `json:"rx_rate_mbps,omitempty"`  // 设备发给路由器的最近一个包的速率
+	ConnectedSec *int64   `json:"connected_sec,omitempty"` // 本次无线连接已持续的秒数
 }
 
 // Client 是 clients_list 返回的一台设备。
@@ -54,6 +64,7 @@ type Client struct {
 	Hostname          string `json:"hostname,omitempty"`
 	Connection        string `json:"connection"`      // wired / 2.4G / 5G / 6G / unknown
 	Guest             bool   `json:"guest,omitempty"` // 连接在访客网络（wlN.M 虚拟接口）上
+	StaInfo                  // 无线连接信息，JSON 中平铺；有线设备或取不到时省略
 	Static            bool   `json:"static"`
 	LeaseRemainingSec *int64 `json:"lease_remaining_sec,omitempty"`
 	LeaseInfinite     bool   `json:"lease_infinite,omitempty"`
@@ -151,6 +162,57 @@ func ParseAssoc(s string) []string {
 	return out
 }
 
+// ParseStaInfo 解析 `wl -i <if> sta_info <MAC>` 的输出。
+// 信号强度优先用 "smoothed rssi"；没有时取 "per antenna average rssi" 中最强的一路（0 表示该天线无数据）。
+// 速率取 "rate of last tx/rx pkt" 的第一个值（tx 行后面的是回退速率），0 表示还没有收发过包。
+func ParseStaInfo(s string) StaInfo {
+	var st StaInfo
+	var smoothed, antBest *int
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if v, ok := strings.CutPrefix(line, "smoothed rssi:"); ok {
+			if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n < 0 {
+				smoothed = &n
+			}
+		} else if v, ok := strings.CutPrefix(line, "per antenna average rssi of rx data frames:"); ok {
+			for _, f := range strings.Fields(v) {
+				if n, err := strconv.Atoi(f); err == nil && n < 0 && (antBest == nil || n > *antBest) {
+					antBest = &n
+				}
+			}
+		} else if v, ok := strings.CutPrefix(line, "rate of last tx pkt:"); ok {
+			st.TxRateMbps = parseKbps(v)
+		} else if v, ok := strings.CutPrefix(line, "rate of last rx pkt:"); ok {
+			st.RxRateMbps = parseKbps(v)
+		} else if v, ok := strings.CutPrefix(line, "in network "); ok {
+			if f := strings.Fields(v); len(f) > 0 {
+				if n, err := strconv.ParseInt(f[0], 10, 64); err == nil && n >= 0 {
+					st.ConnectedSec = &n
+				}
+			}
+		}
+	}
+	st.RSSI = smoothed
+	if st.RSSI == nil {
+		st.RSSI = antBest
+	}
+	return st
+}
+
+// parseKbps 取 "13000 kbps - 2000 kbps" 的第一个数，换算成 Mbps 并保留一位小数。
+func parseKbps(s string) *float64 {
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return nil
+	}
+	k, err := strconv.ParseInt(f[0], 10, 64)
+	if err != nil || k <= 0 {
+		return nil
+	}
+	mbps := math.Round(float64(k)/100) / 10
+	return &mbps
+}
+
 func bandOf(nband string) string {
 	switch strings.TrimSpace(nband) {
 	case "2":
@@ -214,6 +276,7 @@ func Merge(in Inputs) []Client {
 	out := make([]Client, 0, len(byMAC))
 	for _, c := range byMAC {
 		c.Guest = in.Guest[c.MAC]
+		c.StaInfo = in.Sta[c.MAC]
 		switch {
 		case in.Wireless[c.MAC] != "":
 			c.Connection = in.Wireless[c.MAC]
@@ -251,8 +314,9 @@ var baseKeys = []string{
 	"wl2_ifname", "wl2_nband", "wl2_vifs", "wl3_ifname", "wl3_nband", "wl3_vifs",
 }
 
-// Fetch 两次 SSH 调用：先取租约、ARP、nvram，再按无线接口查询关联列表。
-// wl 命令失败时不报错，无线设备的连接方式降级为 wired/unknown。
+// Fetch 最多三次 SSH 调用：先取租约、ARP、nvram，再按无线接口查询关联列表，
+// 有无线设备时再查询各设备的信号强度、速率和连接时长。
+// wl 命令失败时不报错，无线设备的连接方式降级为 wired/unknown，无线连接信息省略。
 func Fetch(ctx context.Context, r runner.Runner) ([]Client, error) {
 	base := runner.Op("clients_base", strings.Join([]string{
 		routercmd.Marker("date"), routercmd.DateCmd,
@@ -282,6 +346,7 @@ func Fetch(ctx context.Context, r runner.Runner) ([]Client, error) {
 	// 主接口（wlN_ifname）和访客网络虚拟接口（wlN_vifs，如 wl1.1）都要查询；虚拟接口继承主接口的频段
 	bands := map[string]string{}
 	guestIf := map[string]bool{}
+	macIf := map[string]string{} // 无线设备 MAC → 所在接口
 	var parts []string
 	addIf := func(ifname, band string, guest bool) {
 		if ifname == "" || !shell.ValidIfName(ifname) || bands[ifname] != "" {
@@ -306,11 +371,41 @@ func Fetch(ctx context.Context, r runner.Runner) ([]Client, error) {
 		for ifname, band := range bands {
 			for _, mac := range ParseAssoc(asec[ifname]) {
 				in.Wireless[mac] = band
+				macIf[mac] = ifname
 				if guestIf[ifname] {
 					in.Guest[mac] = true
 				}
 			}
 		}
 	}
+	if len(macIf) > 0 {
+		in.Sta = fetchStaInfo(ctx, r, macIf)
+	}
 	return Merge(in), nil
+}
+
+// fetchStaInfo 第三次 SSH 调用：对每台无线设备在其所在接口上执行 sta_info。
+// 失败时不报错，只是不返回无线连接信息。
+func fetchStaInfo(ctx context.Context, r runner.Runner, macIf map[string]string) map[string]StaInfo {
+	macs := make([]string, 0, len(macIf))
+	for mac := range macIf {
+		macs = append(macs, mac)
+	}
+	sort.Strings(macs)
+	parts := make([]string, 0, 2*len(macs))
+	for _, mac := range macs {
+		// mac 已由 ParseAssoc 校验为 XX:XX:XX:XX:XX:XX，可安全用作分段标记
+		parts = append(parts, routercmd.Marker(mac), "wl -i "+shell.Quote(macIf[mac])+" sta_info "+shell.Quote(mac)+" 2>/dev/null")
+	}
+	res, err := r.Run(ctx, runner.Op("clients_sta", strings.Join(parts, "; ")), nil)
+	if err != nil {
+		return nil
+	}
+	out := map[string]StaInfo{}
+	for mac, s := range routercmd.Sections(string(res.Stdout)) {
+		if st := ParseStaInfo(s); st != (StaInfo{}) {
+			out[mac] = st
+		}
+	}
+	return out
 }

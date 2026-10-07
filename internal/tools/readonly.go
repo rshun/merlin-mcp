@@ -122,7 +122,7 @@ func registerReadOnly(s *mcp.Server, d Deps) {
 
 	add(s, d, &mcp.Tool{
 		Name:        "clients_list",
-		Description: "列出客户端：合并 DHCP 租约、ARP 表、静态 IP 分配和无线关联列表，给出每台设备的 IP、主机名、连接方式（wired/2.4G/5G/6G/unknown）、是否静态分配和租约剩余时间。",
+		Description: "列出客户端：合并 DHCP 租约、ARP 表、静态 IP 分配和无线关联列表，给出每台设备的 IP、主机名、连接方式（wired/2.4G/5G/6G/unknown）、是否静态分配和租约剩余时间。无线设备另有：信号强度 rssi_dbm（越接近 0 越强）、tx_rate_mbps / rx_rate_mbps（路由器发往设备 / 设备发往路由器的最近一个包的速率，设备空闲时可能偏低）、connected_sec（本次无线连接已持续的秒数）。",
 		Annotations: readOnlyAnn,
 	}, false, func(ctx context.Context, _ NoArgs) (any, error) {
 		list, err := clients.Fetch(ctx, ro)

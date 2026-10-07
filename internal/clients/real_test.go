@@ -46,6 +46,22 @@ func TestParseAssocRealSample(t *testing.T) {
 	}
 }
 
+func TestParseStaInfoRealSample(t *testing.T) {
+	st := ParseStaInfo(readReal(t, "sta_info.txt"))
+	if st.RSSI == nil || *st.RSSI != -27 {
+		t.Errorf("rssi = %v，期望 -27", st.RSSI)
+	}
+	if st.TxRateMbps == nil || *st.TxRateMbps != 13 {
+		t.Errorf("tx = %v，期望 13", st.TxRateMbps)
+	}
+	if st.RxRateMbps == nil || *st.RxRateMbps != 65 {
+		t.Errorf("rx = %v，期望 65", st.RxRateMbps)
+	}
+	if st.ConnectedSec == nil || *st.ConnectedSec != 517723 {
+		t.Errorf("connected = %v，期望 517723", st.ConnectedSec)
+	}
+}
+
 // Asus 的 dnsmasq 启用了 HAVE_BROKEN_RTC：租约文件第一列是剩余秒数，不是到期时间戳。
 func TestLeasesRealSampleUseRemainingSeconds(t *testing.T) {
 	now, err := routercmd.ParseDate(readReal(t, "date.txt"))

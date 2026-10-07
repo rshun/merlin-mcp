@@ -10,7 +10,7 @@
 | `kernel_log_read` | 只读 | 读取 dmesg |
 | `system_status` | 只读 | 型号、固件、负载、CPU、内存、温度、今日重启额度 |
 | `wan_status` | 只读 | WAN 状态和最近的 WAN 事件 |
-| `clients_list` | 只读 | 客户端列表（租约 + ARP + 静态分配 + 无线关联） |
+| `clients_list` | 只读 | 客户端列表（租约 + ARP + 静态分配 + 无线关联、信号强度、速率、连接时长） |
 | `conntrack_status` | 只读 | 连接跟踪表使用率 |
 | `network_diagnose` | 只读 | 从路由器发起 ping / nslookup |
 | `dnsmasq_addfile_read` | 只读 | 读取 dnsmasq.conf.add |
