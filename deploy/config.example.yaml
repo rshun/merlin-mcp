@@ -18,6 +18,9 @@ paths:
   dnsmasq_add: /jffs/configs/dnsmasq.conf.add
   backup_dir: /jffs/merlin-mcp/backups
   syslog: auto                               # auto = 依次尝试 /jffs/syslog.log、/tmp/syslog.log
+  # 可选：本机存放历史日志的目录，文件名为 merlin-syslog-YYYY-MM-DD.log.gz（每天一个）。
+  # 配置后，syslog_read 查询今天之前的日期时直接读这里的文件，不连接路由器。服务用户必须能读取该目录。
+  # syslog_archive: /opt/asuslog
 
 dnsmasq:
   health_check_domain: router.asus.com       # apply 后用来验证 dnsmasq 正常工作的域名

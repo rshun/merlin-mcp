@@ -1,7 +1,10 @@
 package tools_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +40,7 @@ func newEnv(t *testing.T, r runner.Runner, allowMutations bool) env {
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	cfg := &config.Config{
 		AllowMutations: allowMutations,
+		Location:       loc,
 		Paths:          config.Paths{DnsmasqAdd: "/jffs/configs/dnsmasq.conf.add", BackupDir: "/jffs/merlin-mcp/backups", Syslog: "auto"},
 	}
 	now := func() time.Time { return time.Date(2026, 10, 3, 12, 0, 0, 0, loc) }
@@ -223,5 +227,101 @@ func TestSystemStatusIncludesRebootQuota(t *testing.T) {
 	res, text := call(t, connect(t, newEnv(t, f, true).deps), "system_status", map[string]any{})
 	if res.IsError || !strings.Contains(text, `"reboot_allowed_today": true`) || !strings.Contains(text, "RT-TEST") {
 		t.Fatalf("text = %s", text)
+	}
+}
+
+// day 返回上海时区"今天"偏移 offset 天后的 0 点。
+func day(offset int) time.Time {
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	n := time.Now().In(loc)
+	return time.Date(n.Year(), n.Month(), n.Day()+offset, 0, 0, 0, 0, loc)
+}
+
+func syslogLine(d time.Time, hour int, msg string) string {
+	return d.Add(time.Duration(hour)*time.Hour).Format("Jan _2 15:04:05") + " kernel: " + msg + "\n"
+}
+
+func writeArchive(t *testing.T, dir string, d time.Time, content string) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Write([]byte(content))
+	zw.Close()
+	if err := os.WriteFile(filepath.Join(dir, "merlin-syslog-"+d.Format("2006-01-02")+".log.gz"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// routerSyslog 返回 syslog_fetch 的假输出：轮转文件里是昨天的日志，当前文件里是今天的日志。
+func routerSyslog() runnertest.Handler {
+	out := fmt.Sprintf("@@MERLINMCP:path@@\n/jffs/syslog.log\n@@MERLINMCP:date@@\n%d +0800\n", time.Now().Unix()) +
+		"@@MERLINMCP:rotated@@\n" + syslogLine(day(-1), 23, "router-yesterday") +
+		"@@MERLINMCP:current@@\n" + syslogLine(day(0), 0, "router-today")
+	return runnertest.Stdout(out)
+}
+
+func TestSyslogHistoryDateReadsLocalArchive(t *testing.T) {
+	f := runnertest.New() // 没有注册任何操作：一旦走 SSH 就会报错
+	e := newEnv(t, f, false)
+	dir := t.TempDir()
+	e.deps.Cfg.Paths.SyslogArchive = dir
+	d := day(-2)
+	writeArchive(t, dir, d, syslogLine(d, 1, "keep me")+syslogLine(d, 2, "other"))
+	res, text := call(t, connect(t, e.deps), "syslog_read", map[string]any{"date": d.Format("2006-01-02"), "keyword": "keep"})
+	if res.IsError || !strings.Contains(text, "keep me") || strings.Contains(text, "other") || !strings.Contains(text, `"source": "archive"`) {
+		t.Fatalf("isError=%v text=%s", res.IsError, text)
+	}
+	if n := len(f.Calls()); n != 0 {
+		t.Fatalf("读取历史归档不应连接路由器，调用了 %d 次", n)
+	}
+}
+
+func TestSyslogYesterdayFallsBackToRouterBeforeArchiveArrives(t *testing.T) {
+	f := runnertest.New().On("syslog_fetch", routerSyslog())
+	e := newEnv(t, f, false)
+	e.deps.Cfg.Paths.SyslogArchive = t.TempDir() // 昨天的归档还没下载
+	res, text := call(t, connect(t, e.deps), "syslog_read", map[string]any{"date": day(-1).Format("2006-01-02")})
+	if res.IsError || !strings.Contains(text, "router-yesterday") || strings.Contains(text, "router-today") ||
+		!strings.Contains(text, `"source": "router"`) || !strings.Contains(text, `"note"`) {
+		t.Fatalf("isError=%v text=%s", res.IsError, text)
+	}
+	if !strings.Contains(f.CallsFor("syslog_fetch")[0].Cmd, `"$p-1"`) {
+		t.Fatal("回退到路由器时应同时读取轮转日志")
+	}
+}
+
+func TestSyslogTodayReadsRouter(t *testing.T) {
+	f := runnertest.New().On("syslog_fetch", routerSyslog())
+	e := newEnv(t, f, false)
+	e.deps.Cfg.Paths.SyslogArchive = t.TempDir()
+	res, text := call(t, connect(t, e.deps), "syslog_read", map[string]any{"date": day(0).Format("2006-01-02")})
+	if res.IsError || !strings.Contains(text, "router-today") || strings.Contains(text, "router-yesterday") || !strings.Contains(text, `"source": "router"`) {
+		t.Fatalf("isError=%v text=%s", res.IsError, text)
+	}
+}
+
+func TestSyslogRejectsBadDates(t *testing.T) {
+	e := newEnv(t, runnertest.New(), false)
+	e.deps.Cfg.Paths.SyslogArchive = t.TempDir()
+	cs := connect(t, e.deps)
+	for _, args := range []map[string]any{
+		{"date": "2026-1-5"},
+		{"date": "../../etc/passwd"},
+		{"date": day(1).Format("2006-01-02")},
+		{"date": day(0).Format("2006-01-02"), "since": "1h"},
+		{"date": day(-3).Format("2006-01-02")}, // 本地没有这一天的归档
+	} {
+		res, text := call(t, cs, "syslog_read", args)
+		if !res.IsError || !strings.Contains(text, string(apperr.InvalidArgument)) {
+			t.Errorf("args=%v 应返回 INVALID_ARGUMENT: %s", args, text)
+		}
+	}
+}
+
+func TestSyslogHistoryWithoutArchiveConfigured(t *testing.T) {
+	cs := connect(t, newEnv(t, runnertest.New(), false).deps)
+	res, text := call(t, cs, "syslog_read", map[string]any{"date": day(-3).Format("2006-01-02")})
+	if !res.IsError || !strings.Contains(text, "paths.syslog_archive") {
+		t.Fatalf("isError=%v text=%s", res.IsError, text)
 	}
 }

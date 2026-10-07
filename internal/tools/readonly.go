@@ -2,11 +2,16 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/rshun/merlin-mcp/internal/apperr"
 	"github.com/rshun/merlin-mcp/internal/clients"
+	"github.com/rshun/merlin-mcp/internal/config"
 	"github.com/rshun/merlin-mcp/internal/diagnose"
 	"github.com/rshun/merlin-mcp/internal/reboot"
 	"github.com/rshun/merlin-mcp/internal/runner"
@@ -21,6 +26,7 @@ type SyslogArgs struct {
 	Process        string `json:"process,omitempty" jsonschema:"进程名，例如 dnsmasq，精确匹配 name: 或 name[pid]:"`
 	Since          string `json:"since,omitempty" jsonschema:"只看最近一段时间，例如 30m、2h、1d，最大 7d"`
 	IncludeRotated bool   `json:"include_rotated,omitempty" jsonschema:"是否同时读取轮转出去的旧日志"`
+	Date           string `json:"date,omitempty" jsonschema:"只看某一天的日志，格式 YYYY-MM-DD；今天从路由器读取，之前的日期从本机历史归档读取。不能与 since 同时使用"`
 }
 
 type KernelLogArgs struct {
@@ -42,11 +48,14 @@ type KeywordArgs struct {
 }
 
 type logResult struct {
+	Source     string `json:"source,omitempty"` // router 或 archive
+	Date       string `json:"date,omitempty"`
 	Path       string `json:"path,omitempty"`
 	RouterTime string `json:"router_time,omitempty"`
 	Returned   int    `json:"returned_lines"`
 	Truncated  bool   `json:"truncated"`
 	Log        string `json:"log"`
+	Note       string `json:"note,omitempty"`
 }
 
 var readOnlyAnn = &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPtr(false)}
@@ -56,7 +65,7 @@ func registerReadOnly(s *mcp.Server, d Deps) {
 
 	add(s, d, &mcp.Tool{
 		Name:        "syslog_read",
-		Description: "读取路由器系统日志（syslog），用于分析问题。可按时间（since）、进程名（process）、关键字（keyword）过滤，返回最新的 lines 行，单次返回不超过 64KB。",
+		Description: "读取路由器系统日志（syslog），用于分析问题。可按时间（since）、进程名（process）、关键字（keyword）过滤，返回最新的 lines 行，单次返回不超过 64KB。用 date（YYYY-MM-DD）查看某一天的日志：今天从路由器读取，之前的日期从本机历史归档读取。",
 		Annotations: readOnlyAnn,
 	}, false, func(ctx context.Context, in SyslogArgs) (any, error) {
 		n, err := lineLimit(in.Lines)
@@ -70,13 +79,20 @@ func registerReadOnly(s *mcp.Server, d Deps) {
 		if in.Process != "" && !shell.ValidProcessName(in.Process) {
 			return nil, invalid("process 只能包含字母、数字和 _ . -", "")
 		}
+		filter := syslog.Filter{Since: since, Process: in.Process, Keyword: in.Keyword, Lines: n}
+		if in.Date != "" {
+			if in.Since != "" {
+				return nil, invalid("date 和 since 不能同时使用", "")
+			}
+			return readSyslogDay(ctx, ro, d.Cfg, in.Date, filter)
+		}
 		snap, err := syslog.Fetch(ctx, ro, d.Cfg.Paths.Syslog, in.IncludeRotated)
 		if err != nil {
 			return nil, err
 		}
-		lines := syslog.Apply(snap.Lines, syslog.Filter{Since: since, Process: in.Process, Keyword: in.Keyword, Lines: n}, snap.Now)
+		lines := syslog.Apply(snap.Lines, filter, snap.Now)
 		text, truncated := syslog.Render(syslog.Raws(lines), syslog.MaxOutputBytes)
-		return logResult{Path: snap.Path, RouterTime: snap.Now.Format(time.RFC3339), Returned: len(lines), Truncated: truncated, Log: text}, nil
+		return logResult{Source: "router", Path: snap.Path, RouterTime: snap.Now.Format(time.RFC3339), Returned: len(lines), Truncated: truncated, Log: text}, nil
 	})
 
 	add(s, d, &mcp.Tool{
@@ -172,4 +188,57 @@ func registerReadOnly(s *mcp.Server, d Deps) {
 			Lines any `json:"lines"`
 		}{lines}, nil
 	})
+}
+
+// readSyslogDay 读取某一天的 syslog：今天从路由器读取，之前的日期读本机历史归档。
+// 昨天的归档要等凌晨定时任务下载后才有，在此之前退回到路由器读取（含轮转日志）。
+func readSyslogDay(ctx context.Context, r runner.Runner, cfg *config.Config, date string, f syslog.Filter) (any, error) {
+	day, err := time.ParseInLocation("2006-01-02", date, cfg.Location)
+	if err != nil {
+		return nil, invalid(fmt.Sprintf("date 格式错误 %q，应为 YYYY-MM-DD", date), "示例：2026-10-05")
+	}
+	now := time.Now().In(cfg.Location)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, cfg.Location)
+	if day.After(today) {
+		return nil, invalid(fmt.Sprintf("date 不能晚于今天（%s）", today.Format("2006-01-02")), "")
+	}
+
+	note := ""
+	if day.Before(today) {
+		dir := cfg.Paths.SyslogArchive
+		if dir != "" {
+			p := syslog.ArchivePath(dir, day)
+			lines, err := syslog.ReadArchive(p, day)
+			if err == nil {
+				return dayResult(lines, f, logResult{Source: "archive", Date: date, Path: p}), nil
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, apperr.New(apperr.Internal, err.Error(), "")
+			}
+		}
+		if !day.Equal(today.AddDate(0, 0, -1)) {
+			if dir == "" {
+				return nil, invalid("未配置 paths.syslog_archive，无法读取历史日志", "在配置文件中把 paths.syslog_archive 设为本机历史日志目录")
+			}
+			return nil, invalid(fmt.Sprintf("本机没有 %s 的日志归档", date), "归档目录："+dir)
+		}
+		note = "昨天的本机归档尚未生成，已改为从路由器读取（含轮转日志），内容可能不完整"
+	}
+
+	// 路由器按大小轮转日志，当天较早的日志可能已经在轮转文件里，所以总是一起读取
+	snap, err := syslog.Fetch(ctx, r, cfg.Paths.Syslog, true)
+	if err != nil {
+		return nil, err
+	}
+	return dayResult(syslog.OnDay(snap.Lines, day), f, logResult{
+		Source: "router", Date: date, Path: snap.Path, RouterTime: snap.Now.Format(time.RFC3339), Note: note,
+	}), nil
+}
+
+// dayResult 对某一天的日志应用过滤条件，填入 res 的日志部分。
+func dayResult(lines []syslog.Line, f syslog.Filter, res logResult) logResult {
+	lines = syslog.Apply(lines, f, time.Time{})
+	res.Log, res.Truncated = syslog.Render(syslog.Raws(lines), syslog.MaxOutputBytes)
+	res.Returned = len(lines)
+	return res
 }

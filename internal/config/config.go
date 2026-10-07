@@ -47,6 +47,8 @@ type Paths struct {
 	DnsmasqAdd string `yaml:"dnsmasq_add"`
 	BackupDir  string `yaml:"backup_dir"`
 	Syslog     string `yaml:"syslog"`
+	// SyslogArchive 是本机上按天存放的历史日志目录（可选），syslog_read 读取历史日期时使用。
+	SyslogArchive string `yaml:"syslog_archive"`
 }
 
 type Dnsmasq struct {
@@ -145,6 +147,15 @@ func (c *Config) validate() error {
 	}
 	if c.Paths.Syslog != "auto" && !validRouterPath(c.Paths.Syslog) {
 		add("paths.syslog 必须是 auto 或绝对路径: %q", c.Paths.Syslog)
+	}
+	if p := c.Paths.SyslogArchive; p != "" {
+		if !isAbs(p) {
+			add("paths.syslog_archive 必须是绝对路径: %q", p)
+		} else if info, err := os.Stat(p); err != nil {
+			add("paths.syslog_archive 无法访问: %v", err)
+		} else if !info.IsDir() {
+			add("paths.syslog_archive 不是目录: %q", p)
+		}
 	}
 
 	if !shell.ValidDomain(c.Dnsmasq.HealthCheckDomain) {

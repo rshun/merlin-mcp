@@ -118,6 +118,23 @@ func TestLoadRejectsUnsafeRouterPaths(t *testing.T) {
 	}
 }
 
+func TestLoadSyslogArchive(t *testing.T) {
+	f := newFixture(t)
+	c, err := load(t, f.yaml("paths:\n  syslog_archive: "+filepath.ToSlash(f.dir)+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Paths.SyslogArchive != filepath.ToSlash(f.dir) {
+		t.Errorf("SyslogArchive = %q", c.Paths.SyslogArchive)
+	}
+	for _, p := range []string{"relative/asuslog", filepath.ToSlash(filepath.Join(f.dir, "missing")), filepath.ToSlash(f.key)} {
+		_, err := load(t, f.yaml("paths:\n  syslog_archive: "+p+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "paths.syslog_archive") {
+			t.Errorf("syslog_archive=%q 应被拒绝，err=%v", p, err)
+		}
+	}
+}
+
 func TestLoadRejectsMissingKeyFile(t *testing.T) {
 	f := newFixture(t)
 	content := strings.Replace(f.yaml(""), filepath.ToSlash(f.key), filepath.ToSlash(f.key)+".missing", 1)

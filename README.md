@@ -6,7 +6,7 @@
 
 | 工具 | 类型 | 说明 |
 |---|---|---|
-| `syslog_read` | 只读 | 读取 syslog，支持按时间、进程、关键字过滤 |
+| `syslog_read` | 只读 | 读取 syslog，支持按时间、进程、关键字、日期过滤；历史日期读本机归档 |
 | `kernel_log_read` | 只读 | 读取 dmesg |
 | `system_status` | 只读 | 型号、固件、负载、CPU、内存、温度、今日重启额度 |
 | `wan_status` | 只读 | WAN 状态和最近的 WAN 事件 |
@@ -20,6 +20,8 @@
 | `router_reboot` | 破坏性 | 重启路由器，每天最多 1 次 |
 
 修改类工具只有在配置 `allow_mutations: true` 时才会注册。
+
+`syslog_read` 传 `date`（`YYYY-MM-DD`）时只返回这一天的日志：当天的日志从路由器读取；之前的日期读取本机 `paths.syslog_archive` 目录下的 `merlin-syslog-YYYY-MM-DD.log.gz`，不连接路由器。这些归档文件需要你自己用定时任务从路由器下载，merlin-mcp 只负责读取。如果昨天的归档还没下载到本机，会改为从路由器读取（包括轮转出去的旧日志），返回结果里的 `note` 会注明这一点。
 
 ## 安装
 
